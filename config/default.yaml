@@ -46,3 +46,26 @@ hardware:
 web:
   host: "127.0.0.1"
   port: 8080
+
+vending:
+  levels: 10
+  timings:
+    sleep_timeout_s: 60
+    purchase_timeout_s: 120
+    door_unlock_timeout_s: 30
+    door_alarm_delay_s: 10
+
+purchase_server:
+  base_url: "http://localhost:5000"   # override in local.yaml
+  check_path: "/api/purchase/check"
+  complete_path: "/api/purchase/complete"
+  poll_interval_s: 0.5
+  timeout_s: 5.0
+
+qr:
+  # QR for level N encodes base_url + "/" + machine_id + "/" + N
+  base_url: "https://www.monitoni.zhdk.ch"
+  dir: "data/qr"          # generated PNGs; relative paths are resolved from the repo root
+
+database:
+  path: "data/monitoni.db"   # relative paths are resolved from the repo root

@@ -74,3 +74,26 @@ def test_unknown_key_is_named(tmp_path):
     local = write_yaml(tmp_path / "local.yaml", {"hardware": {"gpio": {"pin": 5}}})
     with pytest.raises(ConfigError, match=r"hardware\.gpio: Extra inputs are not permitted"):
         load_config(DEFAULT_PATH, local)
+
+
+def test_milestone_1_sections_load():
+    config = load_config(DEFAULT_PATH)
+    assert config.vending.levels == 10
+    assert config.vending.timings.door_alarm_delay_s == 10.0
+    assert config.purchase_server.check_path == "/api/purchase/check"
+    assert str(config.qr.dir) == "data/qr"
+    assert str(config.database.path) == "data/monitoni.db"
+
+
+def test_bad_timing_type_is_named(tmp_path):
+    data = default_data()
+    data["vending"]["timings"]["sleep_timeout_s"] = "soon"
+    with pytest.raises(ConfigError, match=r"vending\.timings\.sleep_timeout_s: "):
+        load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
+def test_levels_must_be_positive(tmp_path):
+    data = default_data()
+    data["vending"]["levels"] = 0
+    with pytest.raises(ConfigError, match=r"vending\.levels: "):
+        load_config(write_yaml(tmp_path / "default.yaml", data))

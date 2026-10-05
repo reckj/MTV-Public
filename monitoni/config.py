@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class ConfigError(Exception):
@@ -66,10 +66,43 @@ class WebConfig(_Strict):
     port: int
 
 
+class TimingsConfig(_Strict):
+    sleep_timeout_s: float
+    purchase_timeout_s: float
+    door_unlock_timeout_s: float
+    door_alarm_delay_s: float
+
+
+class VendingConfig(_Strict):
+    levels: int = Field(ge=1)
+    timings: TimingsConfig
+
+
+class PurchaseServerConfig(_Strict):
+    base_url: str
+    check_path: str
+    complete_path: str
+    poll_interval_s: float
+    timeout_s: float
+
+
+class QrConfig(_Strict):
+    base_url: str
+    dir: Path
+
+
+class DatabaseConfig(_Strict):
+    path: Path
+
+
 class Config(_Strict):
     system: SystemConfig
     hardware: HardwareConfig
     web: WebConfig
+    vending: VendingConfig
+    purchase_server: PurchaseServerConfig
+    qr: QrConfig
+    database: DatabaseConfig
 
 
 def load_config(default_path: Path, local_path: Path | None = None) -> Config:
