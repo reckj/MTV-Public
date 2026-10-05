@@ -28,17 +28,33 @@ hardware:
     timeout: 1.0
     max_channels: 30
 
+  # Door locks: relay_levels channel per level (index = level - 1). Relay ON = unlocked;
+  # relay OFF or module power loss = locked. Confirm against the wiring.
+  door_locks:
+    channels: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  # Door sensor is a digital input on relay_core, read over Modbus (FC02).
+  door_sensor:
+    di_index: 0              # DI1
+    di_active: low           # low|high: which DI level means "door open"
+    poll_interval_ms: 150
+    debounce_count: 2        # consecutive identical reads before a change counts
+
+  # Motor and spindle lock are relays on relay_core. Hold-to-turn sequence, see monitoni/motor.py.
+  motor:
+    motor_channel: 1
+    spindle_channel: 2
+    spindle_pre_delay_ms: 200
+    spin_after_release_ms: 500
+    spindle_post_delay_ms: 100
+    max_run_s: 10            # hard stop even if the button is never released
+
   # Gledopto ESP32 running WLED, driven over ArtNet.
   wled:
     ip_address: "192.168.1.102"
     universe: 0
     fps: 30
     pixel_count: 300
-
-  # Door sensor is a digital input on relay_core.
-  door_sensor:
-    di_index: 0
-    poll_interval_ms: 150
 
   audio:
     volume: 0.7

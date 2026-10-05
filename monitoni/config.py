@@ -41,11 +41,30 @@ class WledConfig(_Strict):
     pixel_count: int
 
 
-class DoorSensorConfig(_Strict):
-    """Door sensor is a digital input on relay_core, read over Modbus."""
+class DoorLocksConfig(_Strict):
+    """relay_levels channel per level, index = level - 1. Relay ON = unlocked."""
 
-    di_index: int
-    poll_interval_ms: int
+    channels: list[int]
+
+
+class DoorSensorConfig(_Strict):
+    """Door sensor is a digital input on relay_core, read over Modbus (FC02)."""
+
+    di_index: int = Field(ge=0)
+    di_active: Literal["low", "high"]  # which DI level means "door open"
+    poll_interval_ms: int = Field(ge=1)
+    debounce_count: int = Field(ge=1)
+
+
+class MotorConfig(_Strict):
+    """Motor and spindle lock relays on relay_core, and the hold-to-turn timings."""
+
+    motor_channel: int
+    spindle_channel: int
+    spindle_pre_delay_ms: int = Field(ge=0)
+    spin_after_release_ms: int = Field(ge=0)
+    spindle_post_delay_ms: int = Field(ge=0)
+    max_run_s: float = Field(gt=0)
 
 
 class AudioConfig(_Strict):
@@ -56,8 +75,10 @@ class HardwareConfig(_Strict):
     mode: Literal["mock", "real"]
     relay_core: RelayModuleConfig
     relay_levels: RelayModuleConfig
-    wled: WledConfig
+    door_locks: DoorLocksConfig
     door_sensor: DoorSensorConfig
+    motor: MotorConfig
+    wled: WledConfig
     audio: AudioConfig
 
 
@@ -115,9 +136,40 @@ def load_config(default_path: Path, local_path: Path | None = None) -> Config:
     if local_path is not None and local_path.exists():
         data = _deep_merge(data, _read_yaml(local_path))
     try:
-        return Config.model_validate(data)
+        config = Config.model_validate(data)
     except ValidationError as exc:
         raise ConfigError(_format_errors(exc)) from None
+    errors = _cross_checks(config)
+    if errors:
+        raise ConfigError("\n".join(errors))
+    return config
+
+
+def _cross_checks(config: Config) -> list[str]:
+    """Rules that span sections; each line names the offending key."""
+    hw = config.hardware
+    errors = []
+    channels = hw.door_locks.channels
+    if len(channels) != config.vending.levels:
+        errors.append(f"hardware.door_locks.channels: {len(channels)} channels listed for "
+                      f"vending.levels = {config.vending.levels}")
+    outside = [c for c in channels if not 1 <= c <= hw.relay_levels.max_channels]
+    if outside:
+        errors.append(f"hardware.door_locks.channels: {outside} outside "
+                      f"1..{hw.relay_levels.max_channels} (relay_levels.max_channels)")
+    if len(set(channels)) != len(channels):
+        errors.append("hardware.door_locks.channels: a channel is listed twice")
+    for key in ("motor_channel", "spindle_channel"):
+        value = getattr(hw.motor, key)
+        if not 1 <= value <= hw.relay_core.max_channels:
+            errors.append(f"hardware.motor.{key}: {value} outside "
+                          f"1..{hw.relay_core.max_channels} (relay_core.max_channels)")
+    if hw.motor.motor_channel == hw.motor.spindle_channel:
+        errors.append("hardware.motor.spindle_channel: must differ from motor_channel")
+    if hw.door_sensor.di_index >= hw.relay_core.max_channels:
+        errors.append(f"hardware.door_sensor.di_index: {hw.door_sensor.di_index} outside "
+                      f"0..{hw.relay_core.max_channels - 1} (relay_core.max_channels)")
+    return errors
 
 
 def _read_yaml(path: Path) -> dict:

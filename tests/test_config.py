@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -96,4 +97,31 @@ def test_levels_must_be_positive(tmp_path):
     data = default_data()
     data["vending"]["levels"] = 0
     with pytest.raises(ConfigError, match=r"vending\.levels: "):
+        load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
+def test_milestone_2_hardware_sections_load():
+    hw = load_config(DEFAULT_PATH).hardware
+    assert hw.door_locks.channels == list(range(1, 11))
+    assert hw.door_sensor.di_active == "low" and hw.door_sensor.debounce_count == 2
+    assert hw.motor.motor_channel == 1 and hw.motor.spindle_channel == 2
+    assert hw.motor.max_run_s == 10.0
+
+
+@pytest.mark.parametrize("section,key,value", [
+    ("door_locks", "channels", [1, 2, 3]),
+    ("door_locks", "channels", [1, 2, 3, 4, 5, 6, 7, 8, 9, 31]),
+    ("door_locks", "channels", [1, 2, 3, 4, 5, 6, 7, 8, 9, 9]),
+    ("motor", "spindle_channel", 1),
+    ("motor", "motor_channel", 9),
+    ("motor", "max_run_s", 0),
+    ("door_sensor", "di_active", "middle"),
+    ("door_sensor", "di_index", 8),
+    ("door_sensor", "debounce_count", 0),
+], ids=["too-few-channels", "channel-31", "duplicate-channel", "same-channel",
+        "motor-channel-9", "max-run-0", "di-active", "di-index-8", "debounce-0"])
+def test_hardware_rules_name_the_key(tmp_path, section, key, value):
+    data = default_data()
+    data["hardware"][section][key] = value
+    with pytest.raises(ConfigError, match=re.escape(f"hardware.{section}.{key}: ")):
         load_config(write_yaml(tmp_path / "default.yaml", data))
