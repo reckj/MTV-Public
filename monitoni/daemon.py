@@ -1,59 +1,97 @@
-"""The daemon: owns hardware, config and the web server. One instance per process."""
+"""The daemon: owns config, hardware, purchase server, event log, flow and the web server."""
 
+import asyncio
+import contextlib
 import logging
 import time
+from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
 from monitoni.config import Config
+from monitoni.eventlog import EventLog
+from monitoni.flow import Event, Flow, IllegalTransition
 from monitoni.hardware.base import Hardware
+from monitoni.purchase import PurchaseServer
 from monitoni.web.server import create_app
 
 log = logging.getLogger(__name__)
 
 
 class Daemon:
-    def __init__(self, config: Config, hardware: Hardware) -> None:
+    def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer) -> None:
         self.config = config
         self.hardware = hardware
+        self.purchase = purchase
+        self.events = EventLog(config.database.path)
+        self.changed = asyncio.Event()  # set by the flow on every state change
+        self.flow = Flow(config, hardware, purchase, self.events, on_change=self.changed.set)
         self._started_at: float | None = None
-        self._hardware_started = False
         self._runner: web.AppRunner | None = None
+        self._drain_task: asyncio.Task | None = None
+        self._stops: list[Callable[[], Awaitable[None]]] = []  # what to undo, in start order
 
     async def start(self) -> None:
-        """Start hardware, then the web server. If the web server fails, stop hardware."""
+        """Start everything in order. If any step fails, undo the earlier ones and re-raise."""
         self._started_at = time.monotonic()
-        await self.hardware.start()
-        self._hardware_started = True
         try:
+            await self.events.start()
+            self._stops.append(self.events.stop)
+            await self.hardware.start()
+            self._stops.append(self.hardware.stop)
+            await self.flow.start()
+            self._stops.append(self.flow.stop)
+            self._drain_task = asyncio.create_task(self._drain_hardware_events(), name="hw-events")
+            self._stops.append(self._stop_drain)
             self._runner = web.AppRunner(create_app(self), access_log=None)
+            self._stops.append(self._stop_web)
             await self._runner.setup()
             site = web.TCPSite(self._runner, self.config.web.host, self.config.web.port)
             await site.start()
         except BaseException:
-            await self._stop_web()
-            await self._stop_hardware()
+            await self._stop_all()
             raise
         log.info("daemon started, machine %s, hardware %s, UI at %s",
                  self.config.system.machine_id, self.config.hardware.mode, self.url)
 
     async def stop(self) -> None:
-        """Stop the web server (closes WebSockets); hardware stops no matter what."""
-        try:
-            await self._stop_web()
-        finally:
-            await self._stop_hardware()
-            log.info("daemon stopped")
+        """Stop in reverse order. Every step runs even if an earlier one fails."""
+        await self._stop_all()
+
+    async def _stop_all(self) -> None:
+        first_error: BaseException | None = None
+        while self._stops:
+            stop = self._stops.pop()
+            try:
+                await stop()
+            except Exception as exc:
+                log.exception("error while stopping")
+                first_error = first_error or exc
+        log.info("daemon stopped")
+        if first_error is not None:
+            raise first_error
 
     async def _stop_web(self) -> None:
         runner, self._runner = self._runner, None
         if runner is not None:
             await runner.cleanup()
 
-    async def _stop_hardware(self) -> None:
-        if self._hardware_started:
-            self._hardware_started = False
-            await self.hardware.stop()
+    async def _stop_drain(self) -> None:
+        task, self._drain_task = self._drain_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _drain_hardware_events(self) -> None:
+        """Forward door events from the hardware queue to the flow."""
+        while True:
+            event = await self.hardware.events.get()
+            await self.events.write("hardware", self.flow.state.value,
+                                    level=self.flow.selected_level,
+                                    details={"event": event.value})
+            with contextlib.suppress(IllegalTransition):  # the flow already logged it
+                await self.flow.dispatch(Event(event.value))
 
     @property
     def url(self) -> str:
@@ -66,9 +104,17 @@ class Daemon:
     def status(self) -> dict:
         """The status object served by /api/status and pushed over /ws."""
         uptime = 0.0 if self._started_at is None else time.monotonic() - self._started_at
+        levels = self.config.vending.levels
+        flow = self.flow.status()
+        level = flow["selected_level"]
         return {
             "machine_id": self.config.system.machine_id,
             "hardware_mode": self.config.hardware.mode,
             "uptime_s": round(uptime, 1),
-            "state": "idle",
+            **flow,
+            "levels": levels,
+            "doors": {str(n): "locked" if self.hardware.door_locked(n) else "unlocked"
+                      for n in range(1, levels + 1)},
+            "qr_url": None if level is None else f"/api/qr/{level}.png",
+            "maintenance_message": self.config.system.maintenance_message,
         }

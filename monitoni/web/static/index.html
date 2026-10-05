@@ -6,22 +6,66 @@
   <title>MoniToni</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body data-state="">
+  <header>
+    <span id="state_name">–</span>
+    <span id="countdown"></span>
+    <span id="connection" class="disconnected">disconnected</span>
+  </header>
+
   <main>
-    <h1>MoniToni</h1>
-    <p id="connection" class="disconnected">disconnected</p>
-    <dl>
-      <dt>Machine</dt>
-      <dd id="machine_id">–</dd>
-      <dt>Hardware</dt>
-      <dd id="hardware_mode">–</dd>
-      <dt>State</dt>
-      <dd id="state">–</dd>
-      <dt>Uptime</dt>
-      <dd id="uptime_s">–</dd>
-    </dl>
-    <p class="note">Placeholder page. The daemon pushes status over a WebSocket every 2 s.</p>
+    <section data-state="idle">
+      <h1>Select a level</h1>
+      <div id="levels" class="levels"></div>
+    </section>
+
+    <section data-state="sleep" id="sleep">
+      <p>Tap to wake</p>
+    </section>
+
+    <section data-state="checking_purchase">
+      <h1>Scan to pay</h1>
+      <p>Level <span class="selected_level"></span></p>
+      <img id="qr" alt="QR code" src="">
+      <button data-command="cancel">Cancel</button>
+    </section>
+
+    <section data-state="door_unlocked">
+      <h1>Door <span class="selected_level"></span> is unlocked</h1>
+      <p>Open it.</p>
+    </section>
+
+    <section data-state="door_opened">
+      <h1>Take your product</h1>
+      <p>Then close the door.</p>
+    </section>
+
+    <section data-state="door_alarm" id="alarm">
+      <h1>Please close the door</h1>
+    </section>
+
+    <section data-state="completing">
+      <h1>Thank you</h1>
+    </section>
+
+    <section data-state="out_of_order">
+      <h1>Out of order</h1>
+      <p id="maintenance_message"></p>
+    </section>
   </main>
+
+  <aside id="dev" hidden>
+    <h2>Dev panel (mock hardware)</h2>
+    <div class="row">
+      <button data-command="simulate_payment">Simulate payment</button>
+      <button data-command="simulate_door" data-open="true">Door open</button>
+      <button data-command="simulate_door" data-open="false">Door close</button>
+    </div>
+    <p>Doors: <span id="doors"></span></p>
+    <p>Purchase: <span id="purchase_id">–</span></p>
+    <ol id="events" reversed></ol>
+  </aside>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

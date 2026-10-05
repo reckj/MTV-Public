@@ -11,10 +11,12 @@ from monitoni.config import Config, ConfigError, load_config
 from monitoni.daemon import Daemon
 from monitoni.hardware.base import Hardware
 from monitoni.hardware.mock import MockHardware
+from monitoni.purchase import MockPurchaseServer, PurchaseServer
 
 log = logging.getLogger("monitoni")
 
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_DIR = REPO_ROOT / "config"
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -44,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
         log.error("invalid configuration:\n%s", exc)
         return 1
 
+    # relative data paths are taken from the repo root, not the working directory
+    config.database.path = REPO_ROOT / config.database.path
+    config.qr.dir = REPO_ROOT / config.qr.dir
+
     if args.mock:
         config.hardware.mode = "mock"
 
@@ -56,17 +62,18 @@ def main(argv: list[str] | None = None) -> int:
         log.error("real hardware mode is not implemented yet; run with --mock")
         return 1
 
-    return asyncio.run(run(config, MockHardware()))
+    hardware = MockHardware(config.vending.levels)
+    return asyncio.run(run(config, hardware, MockPurchaseServer()))
 
 
-async def run(config: Config, hardware: Hardware) -> int:
+async def run(config: Config, hardware: Hardware, purchase: PurchaseServer) -> int:
     """Start the daemon, wait for SIGINT/SIGTERM, stop it cleanly."""
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    daemon = Daemon(config, hardware)
+    daemon = Daemon(config, hardware, purchase)
     try:
         await daemon.start()
         await stop.wait()
