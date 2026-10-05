@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import aiohttp
 import pytest
 
 from monitoni.config import Config, load_config
+from monitoni.hardware import modbus
+from tests.fake_waveshare import FakeWaveshare
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "config" / "default.yaml"
 LONG = 10.0  # a timeout that never fires inside a test
@@ -22,6 +25,46 @@ def make_config(tmp_path):
         for key in ("sleep_timeout_s", "purchase_timeout_s",
                     "door_unlock_timeout_s", "door_alarm_delay_s"):
             setattr(config.vending.timings, key, timings.get(key, LONG))
+        motor = config.hardware.motor
+        motor.spindle_pre_delay_ms, motor.spin_after_release_ms = 10, 10
+        motor.spindle_post_delay_ms = 5
         return config
 
     return _make
+
+
+@pytest.fixture
+async def client():
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+        yield session
+
+
+@pytest.fixture
+async def fakes():
+    """Two fake Waveshare modules: (core: 8 coils + 8 inputs, levels: 30 coils). Door closed."""
+    core = FakeWaveshare(coils=8, inputs=8)
+    levels = FakeWaveshare(coils=30, inputs=0)
+    core.inputs[0] = True  # di_active is "low" in default.yaml, so high means closed
+    await core.start()
+    await levels.start()
+    yield core, levels
+    await core.stop()
+    await levels.stop()
+
+
+@pytest.fixture
+def real_config(make_config, fakes, monkeypatch):
+    """Real hardware mode pointed at the two fakes, with fast polling and reconnects."""
+    monkeypatch.setattr(modbus, "RECONNECT_BACKOFF", (0.05,))
+    monkeypatch.setattr(modbus, "MONITOR_INTERVAL_S", 0.02)
+    core, levels = fakes
+    config = make_config()
+    config.hardware.mode = "real"
+    for module, fake in ((config.hardware.relay_core, core),
+                         (config.hardware.relay_levels, levels)):
+        module.host = "127.0.0.1"
+        module.port = fake.port
+        module.timeout = 0.3
+    config.hardware.door_sensor.poll_interval_ms = 10
+    return config
+

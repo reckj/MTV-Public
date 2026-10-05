@@ -13,8 +13,12 @@ class MockHardware:
         self.levels = levels
         self.events: asyncio.Queue = asyncio.Queue()
         self.calls: list[str] = []  # every call, oldest first; tests read this
+        self.is_healthy = True  # tests flip this to exercise the recovery decision
         self._locked = {level: True for level in range(1, levels + 1)}
         self._alarm = False
+        self._door_open = False
+        self._motor = False
+        self._spindle = False
         self._running = False
 
     async def start(self) -> None:
@@ -30,9 +34,14 @@ class MockHardware:
             "mode": "mock",
             "running": self._running,
             "alarm": self._alarm,
+            "door_open": self._door_open,
             "doors": {level: "locked" if locked else "unlocked"
                       for level, locked in self._locked.items()},
+            "motor": {"running": self._motor, "spindle_open": self._spindle},
         }
+
+    def healthy(self) -> bool:
+        return self.is_healthy
 
     async def lock_door(self, level: int) -> None:
         self._record(f"lock_door({level})")
@@ -54,10 +63,19 @@ class MockHardware:
     def door_locked(self, level: int) -> bool:
         return self._locked.get(level, True)
 
+    async def set_motor(self, on: bool) -> None:
+        self._record(f"set_motor({on})")
+        self._motor = on
+
+    async def set_spindle(self, on: bool) -> None:
+        self._record(f"set_spindle({on})")
+        self._spindle = on
+
     def simulate_door(self, open: bool) -> None:
         """Dev-only: pretend the door sensor changed."""
         event = DoorEvent.OPENED if open else DoorEvent.CLOSED
         self._record(f"simulate_door({event.value})")
+        self._door_open = open
         self.events.put_nowait(event)
 
     def _record(self, call: str) -> None:
