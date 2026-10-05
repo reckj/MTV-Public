@@ -1,0 +1,14 @@
+# Copy to config/local.yaml and fill in this machine's values.
+# Only keys that differ from default.yaml are needed.
+
+system:
+  machine_id: "VM001"
+
+hardware:
+  mode: real
+  relay_core:
+    host: "192.168.1.100"
+  relay_levels:
+    host: "192.168.1.101"
+  wled:
+    ip_address: "192.168.1.102"

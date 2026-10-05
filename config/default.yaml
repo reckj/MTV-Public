@@ -1,0 +1,48 @@
+# MoniToni default configuration. Do not edit on a machine; put machine-specific
+# values in config/local.yaml (see local.yaml.example). local.yaml is merged on
+# top of this file key by key.
+
+system:
+  name: "MoniToni Vending Machine"
+  machine_id: "VM001"
+  maintenance_mode: false
+  maintenance_message: "Machine under maintenance"
+
+hardware:
+  # mock = no hardware I/O (laptop development), real = talk to the modules below.
+  mode: mock
+
+  # Waveshare 8-ch Modbus relay module (Module C): motor, spindle lock, digital inputs.
+  relay_core:
+    host: "192.168.1.100"
+    port: 502
+    slave_address: 1
+    timeout: 1.0
+    max_channels: 8
+
+  # Waveshare 30-ch Modbus relay module: one door lock per level.
+  relay_levels:
+    host: "192.168.1.101"
+    port: 502
+    slave_address: 1
+    timeout: 1.0
+    max_channels: 30
+
+  # Gledopto ESP32 running WLED, driven over ArtNet.
+  wled:
+    ip_address: "192.168.1.102"
+    universe: 0
+    fps: 30
+    pixel_count: 300
+
+  # Door sensor is a digital input on relay_core.
+  door_sensor:
+    di_index: 0
+    poll_interval_ms: 150
+
+  audio:
+    volume: 0.7
+
+web:
+  host: "127.0.0.1"
+  port: 8080

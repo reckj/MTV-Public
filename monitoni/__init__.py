@@ -1,0 +1,1 @@
+"""MoniToni vending machine daemon."""
