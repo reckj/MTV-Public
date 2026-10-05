@@ -48,6 +48,7 @@ TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.IDLE, Event.TIMEOUT): State.SLEEP,
     (State.SLEEP, Event.TOUCH): State.IDLE,
     (State.CHECKING_PURCHASE, Event.PURCHASE_VALID): State.DOOR_UNLOCKED,
+    # purchase_invalid: only the real purchase client emits it; its meaning is defined there
     (State.CHECKING_PURCHASE, Event.PURCHASE_INVALID): State.IDLE,
     (State.CHECKING_PURCHASE, Event.CANCEL): State.IDLE,
     (State.CHECKING_PURCHASE, Event.TIMEOUT): State.IDLE,
@@ -246,6 +247,7 @@ class Flow:
     async def _poll_purchase(self, level: int) -> None:
         machine_id = self.config.system.machine_id
         interval = self.config.purchase_server.poll_interval_s
+        # negative polls are not logged: that would be two rows a second for up to 120 s
         while True:
             server_id = await self.purchase.check(machine_id, level)
             if server_id is not None:

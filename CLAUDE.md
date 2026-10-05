@@ -47,6 +47,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - Door lock rule: every entry into `idle` or `out_of_order` locks all doors in
   the one entry hook; `unlock_door` is called from exactly one place
   (`door_unlocked` entry). Nothing locks "on the way".
+- Open, decided in the relay milestone: hardware errors inside entry hooks.
+  Today the exception propagates out of `dispatch` and the state is unchanged.
 - Commands come in over `POST /api/command`; status goes out over the
   WebSocket (on every state change plus a 1 s heartbeat). The socket is
   one-way.
