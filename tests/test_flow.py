@@ -26,12 +26,13 @@ REJECTED = [
 async def make_flow(make_config):
     started = []
 
-    async def _make(maintenance: bool = False, **timings: float) -> Flow:
+    async def _make(maintenance: bool = False, hardware_cls=MockHardware,
+                    **timings: float) -> Flow:
         config = make_config(**timings)
         config.system.maintenance_mode = maintenance
         events = EventLog(config.database.path)
         await events.start()
-        hardware = MockHardware(config.vending.levels)
+        hardware = hardware_cls(config.vending.levels)
         await hardware.start()
         flow = Flow(config, hardware, MockPurchaseServer(), events)
         await flow.start()
@@ -53,8 +54,8 @@ async def wait_until(predicate, what: str, timeout: float = 2.0) -> None:
 
 
 async def wait_for(flow: Flow, state: State) -> None:
-    """Wait until the flow is in `state` and its entry hooks have run (lock released)."""
-    await wait_until(lambda: flow.state is state and not flow._lock.locked(), state.value)
+    """Wait until the flow reports `state`; by then its entry hook has completed."""
+    await wait_until(lambda: flow.state is state, state.value)
 
 
 async def force(flow: Flow, state: State) -> None:
@@ -209,6 +210,7 @@ async def test_happy_path(make_flow):
                            "completing", "idle"]
     complete = [r for r in rows if r["kind"] == "purchase_complete"]
     assert complete and complete[0]["purchase_id"] == server_id and complete[0]["details"]["ok"]
+    assert complete[0]["state"] == "completing"  # the completing hook saw the new state
 
 
 async def test_out_of_order_at_startup(make_flow):
@@ -227,3 +229,28 @@ async def test_rejected_event_is_logged(make_flow):
         await flow.dispatch(Event.DOOR_OPENED)
     rows = await flow.events.recent(1)
     assert rows[0]["kind"] == "rejected" and rows[0]["details"] == {"event": "door_opened"}
+
+
+# -- entry hooks complete before the state is visible -----------------------------
+
+class BlockingHardware(MockHardware):
+    """unlock_door waits for `release`, so a test can look at the flow mid-hook."""
+
+    def __init__(self, levels: int) -> None:
+        super().__init__(levels)
+        self.release = asyncio.Event()
+
+    async def unlock_door(self, level: int) -> None:
+        await self.release.wait()
+        await super().unlock_door(level)
+
+
+async def test_state_changes_only_after_entry_hook_completed(make_flow):
+    flow = await make_flow(hardware_cls=BlockingHardware)
+    await flow.dispatch(Event.SELECT_LEVEL, level=3)
+    dispatching = asyncio.create_task(flow.dispatch(Event.PURCHASE_VALID, purchase_id="srv-1"))
+    await asyncio.sleep(0.02)  # dispatch is now inside unlock_door, waiting for release
+    assert flow.state is State.CHECKING_PURCHASE and flow.hardware.door_locked(3)
+    flow.hardware.release.set()
+    await dispatching
+    assert flow.state is State.DOOR_UNLOCKED and not flow.hardware.door_locked(3)

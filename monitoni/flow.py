@@ -100,10 +100,11 @@ class Flow:
 
     async def start(self) -> None:
         async with self._lock:
-            self.state = State.OUT_OF_ORDER if self.config.system.maintenance_mode else State.IDLE
-            log.info("flow starting in %s", self.state.value)
-            await self._enter(self.state)
-            await self.events.write("daemon", self.state.value, details={"event": "start"})
+            initial = State.OUT_OF_ORDER if self.config.system.maintenance_mode else State.IDLE
+            log.info("flow starting in %s", initial.value)
+            await self._enter(initial)
+            self.state = initial
+            await self.events.write("daemon", initial.value, details={"event": "start"})
         self.on_change()
 
     async def stop(self) -> None:
@@ -163,16 +164,26 @@ class Flow:
     # -- transition machinery ------------------------------------------------
 
     async def _transition(self, new_state: State, event: Event) -> None:
+        """Leave the old state, enter the new one, then make it visible.
+
+        Invariant: status never shows a state whose entry hook has not completed.
+        `self.state` is assigned right after `_enter` returns, with no await in
+        between, so the tasks `_enter` starts never observe the old state. The
+        transition row is written after that; `dispatch` notifies once the lock is
+        released. A hook that raises leaves the state unchanged (hardware errors in
+        hooks are an open decision, see CLAUDE.md).
+        """
         old_state = self.state
+        level, purchase_id = self.selected_level, self.purchase_id  # before the hooks change them
+        log.info("%s --%s--> %s", old_state.value, event.value, new_state.value)
         self._cancel_tasks()
         await self._leave(old_state)
+        await self._enter(new_state)
         self.state = new_state
-        log.info("%s --%s--> %s", old_state.value, event.value, new_state.value)
-        await self.events.write("transition", new_state.value, level=self.selected_level,
-                                purchase_id=self.purchase_id,
+        await self.events.write("transition", new_state.value, level=level,
+                                purchase_id=purchase_id,
                                 details={"from": old_state.value, "to": new_state.value,
                                          "event": event.value})
-        await self._enter(new_state)
 
     async def _leave(self, state: State) -> None:
         if state is State.DOOR_ALARM:
