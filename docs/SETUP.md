@@ -71,11 +71,24 @@ from `config/default.yaml`):
 - `system.machine_id` — this machine's id, sent with every purchase check.
 - `hardware.relay_core.host`, `hardware.relay_levels.host`,
   `hardware.wled.ip_address` — the modules' IP addresses.
+- `hardware.door_locks.channels` — the `relay_levels` channel for level 1,
+  2, … in order (default `[1, 2, …, 10]`). Confirm against the wiring.
+- `hardware.door_sensor.di_index`, `di_active` — which digital input on
+  `relay_core` the door sensor is on (0 = DI1) and which level means "door
+  open" (`low` or `high`). `debounce_count` reads must agree before a change
+  counts. Confirm against the wiring.
+- `hardware.motor.motor_channel`, `spindle_channel` — the `relay_core`
+  channels for the motor and the spindle lock. Confirm against the wiring.
 - `purchase_server.base_url` — where purchases are verified.
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). Generated PNGs land
   in `data/qr/`; delete a file there to regenerate it after changing the
   value.
+
+Both Waveshare modules ship with the same address, 192.168.1.254. Each needs
+its own static IP before the daemon can talk to both; `default.yaml` assumes
+192.168.1.100 for `relay_core` and 192.168.1.101 for `relay_levels`. How to
+change a module's address will be written down when it has been done.
 
 On the development laptop none of these are set; mock mode runs on the
 defaults. Setting them on a Pi: _to be written during integration._
@@ -103,10 +116,21 @@ door open, door close, back to idle. Every step is written to
 `data/monitoni.db`. Stop the daemon with Ctrl+C; it logs "shutdown requested"
 and exits.
 
-Starting without `--mock` while `hardware.mode` is `real` refuses to run if
-`config/local.yaml` is missing.
+In `idle` the page also shows a big TURN button: hold it to run the motor
+(spindle lock opens first); it stops on release and after `max_run_s`
+regardless.
 
-_Real hardware start: to be written during integration._
+Starting without `--mock` while `hardware.mode` is `real` refuses to run if
+`config/local.yaml` is missing. With a `local.yaml` the daemon starts even if
+a module is unreachable: the page shows "Out of order" with "Reason:
+hardware", and `/api/status` lists both modules under `hardware` with
+`connected` and `last_error`. The daemon reconnects every 2, 5, 10, then
+30 seconds and returns to `idle` by itself once both modules answer and the
+door sensor reads. A module that drops out during operation has the same
+effect. "Reason: maintenance" (from `system.maintenance_mode`) never clears
+itself.
+
+_Real hardware start on a Pi: to be written during integration._
 
 ## 8. Verification
 
