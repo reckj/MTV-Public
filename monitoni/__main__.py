@@ -67,10 +67,14 @@ async def run(config: Config, hardware: Hardware) -> int:
         loop.add_signal_handler(sig, stop.set)
 
     daemon = Daemon(config, hardware)
-    await daemon.start()
     try:
+        await daemon.start()
         await stop.wait()
         log.info("shutdown requested")
+    except OSError as exc:
+        log.error("cannot bind http://%s:%s: %s",
+                  config.web.host, config.web.port, exc.strerror or exc)
+        return 1
     finally:
         await daemon.stop()
     return 0

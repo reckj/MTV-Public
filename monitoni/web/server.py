@@ -49,7 +49,10 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
 
     async def push_status() -> None:
         while not ws.closed:
-            await ws.send_json(daemon.status())
+            try:
+                await ws.send_json(daemon.status())
+            except ConnectionResetError:
+                break  # peer went away between the closed check and the send
             await asyncio.sleep(STATUS_PUSH_INTERVAL_S)
 
     pusher = asyncio.create_task(push_status())

@@ -17,25 +17,43 @@ class Daemon:
         self.config = config
         self.hardware = hardware
         self._started_at: float | None = None
+        self._hardware_started = False
         self._runner: web.AppRunner | None = None
 
     async def start(self) -> None:
+        """Start hardware, then the web server. If the web server fails, stop hardware."""
         self._started_at = time.monotonic()
         await self.hardware.start()
-        self._runner = web.AppRunner(create_app(self))
-        await self._runner.setup()
-        site = web.TCPSite(self._runner, self.config.web.host, self.config.web.port)
-        await site.start()
+        self._hardware_started = True
+        try:
+            self._runner = web.AppRunner(create_app(self), access_log=None)
+            await self._runner.setup()
+            site = web.TCPSite(self._runner, self.config.web.host, self.config.web.port)
+            await site.start()
+        except BaseException:
+            await self._stop_web()
+            await self._stop_hardware()
+            raise
         log.info("daemon started, machine %s, hardware %s, UI at %s",
                  self.config.system.machine_id, self.config.hardware.mode, self.url)
 
     async def stop(self) -> None:
-        """Stop in reverse order: web server (closes WebSockets), then hardware."""
-        if self._runner is not None:
-            await self._runner.cleanup()
-            self._runner = None
-        await self.hardware.stop()
-        log.info("daemon stopped")
+        """Stop the web server (closes WebSockets); hardware stops no matter what."""
+        try:
+            await self._stop_web()
+        finally:
+            await self._stop_hardware()
+            log.info("daemon stopped")
+
+    async def _stop_web(self) -> None:
+        runner, self._runner = self._runner, None
+        if runner is not None:
+            await runner.cleanup()
+
+    async def _stop_hardware(self) -> None:
+        if self._hardware_started:
+            self._hardware_started = False
+            await self.hardware.stop()
 
     @property
     def url(self) -> str:

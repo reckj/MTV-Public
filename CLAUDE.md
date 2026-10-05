@@ -40,6 +40,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
   wrappers, no plugin systems, no abstract base classes beyond the one
   hardware protocol.
 - Config validation errors name the offending key.
+- `default.yaml` is the production configuration; development always runs with
+  `--mock`.
 - stdlib `logging` to stdout only; journald captures it on the machine.
 - English only, code and docs. Code stays Python 3.11 compatible.
 

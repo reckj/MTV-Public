@@ -20,7 +20,7 @@ def default_data() -> dict:
 def test_default_config_loads():
     config = load_config(DEFAULT_PATH)
     assert config.system.machine_id == "VM001"
-    assert config.hardware.mode == "mock"
+    assert config.hardware.mode == "real"
     assert config.hardware.relay_levels.max_channels == 30
     assert config.web.host == "127.0.0.1"
 

@@ -9,8 +9,8 @@ system:
   maintenance_message: "Machine under maintenance"
 
 hardware:
-  # mock = no hardware I/O (laptop development), real = talk to the modules below.
-  mode: mock
+  # real = talk to the modules below. Development always runs `python -m monitoni --mock`.
+  mode: real
 
   # Waveshare 8-ch Modbus relay module (Module C): motor, spindle lock, digital inputs.
   relay_core:

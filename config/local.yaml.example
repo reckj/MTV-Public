@@ -5,7 +5,6 @@ system:
   machine_id: "VM001"
 
 hardware:
-  mode: real
   relay_core:
     host: "192.168.1.100"
   relay_levels:

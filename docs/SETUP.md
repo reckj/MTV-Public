@@ -40,19 +40,21 @@ Copy or clone the repository, create the virtual environment, install the
 pinned requirements, and install offline from a wheel directory when the
 machine has no internet.
 
-Steps performed so far (on a development laptop, not yet on a Pi):
+Get the repository onto the machine (clone from GitHub or copy from a USB
+stick); exact commands will be written when this is first done on a Pi.
+
+Steps performed so far (on a development laptop, not yet on a Pi), from inside
+the repository directory:
 
 ```
-git clone https://github.com/reckj/MTV-Public.git monitoni
-cd monitoni
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/pip install -r requirements.txt
 ```
 
-`make dev` runs exactly these steps for you (creating `.venv` only if it is
-missing) and then starts the daemon in mock mode. `python3` must be
-Python 3.11; Raspberry Pi OS Bookworm ships it.
+The machine needs `requirements.txt` only. `requirements-dev.txt` (tests,
+lint) is for development; `make dev` installs both and then starts the daemon
+in mock mode. `python3` must be Python 3.11; Raspberry Pi OS Bookworm ships it.
 
 _Offline installation from a wheel directory: to be written during
 integration._
