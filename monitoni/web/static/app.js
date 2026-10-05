@@ -27,7 +27,9 @@ function render(status) {
     el.textContent = status.selected_level ?? "";
   }
   $("maintenance_message").textContent = status.maintenance_message;
+  $("reason").textContent = status.reason ? `Reason: ${status.reason}` : "";
   $("purchase_id").textContent = status.purchase_id ?? "–";
+  document.body.dataset.motor = status.motor.running ? "running" : status.motor.pressed ? "pressed" : "";
 
   const qr = $("qr");
   const src = status.qr_url ?? "";
@@ -48,7 +50,9 @@ function render(status) {
   dev.hidden = status.hardware_mode !== "mock";
   if (!dev.hidden) {
     $("doors").textContent = Object.entries(status.doors)
-      .map(([n, s]) => `${n}:${s === "locked" ? "🔒" : "🔓"}`).join(" ");
+      .map(([n, s]) => `${n}:${s === "locked" ? "🔒" : s === "unlocked" ? "🔓" : "?"}`).join(" ");
+    $("motor").textContent = JSON.stringify(status.motor);
+    $("hardware").textContent = JSON.stringify(status.hardware, null, 1);
     loadEvents();
   }
 }
@@ -89,5 +93,14 @@ for (const b of document.querySelectorAll("button[data-command]")) {
   };
 }
 $("sleep").onclick = () => send({ command: "touch" });
+
+// TURN: hold to run the motor. Pointer down presses, anything that ends the hold releases.
+const turn = $("turn");
+const releaseTurn = () => send({ command: "motor_release" });
+turn.onpointerdown = () => send({ command: "motor_press" });
+turn.onpointerup = releaseTurn;
+turn.onpointercancel = releaseTurn;
+turn.onpointerleave = releaseTurn;
+turn.oncontextmenu = (e) => e.preventDefault();
 
 connect();

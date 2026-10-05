@@ -11,6 +11,7 @@ from monitoni.config import Config, ConfigError, load_config
 from monitoni.daemon import Daemon
 from monitoni.hardware.base import Hardware
 from monitoni.hardware.mock import MockHardware
+from monitoni.hardware.real import RealHardware
 from monitoni.purchase import MockPurchaseServer, PurchaseServer
 
 log = logging.getLogger("monitoni")
@@ -53,16 +54,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.mock:
         config.hardware.mode = "mock"
 
+    hardware: Hardware
     if config.hardware.mode == "real":
         if not local_path.exists():
             log.error("refusing to start with real hardware: %s is missing "
                       "(copy local.yaml.example and fill in your machine's values, "
                       "or run with --mock)", local_path)
             return 1
-        log.error("real hardware mode is not implemented yet; run with --mock")
-        return 1
-
-    hardware = MockHardware(config.vending.levels)
+        hardware = RealHardware(config)
+    else:
+        hardware = MockHardware(config.vending.levels)
+    # the purchase server is still the mock in every mode; the HTTP client is a later milestone
     return asyncio.run(run(config, hardware, MockPurchaseServer()))
 
 

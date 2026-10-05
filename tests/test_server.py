@@ -6,22 +6,35 @@ import aiohttp
 import pytest
 
 from monitoni.daemon import Daemon
+from monitoni.hardware.base import HardwareError, HardwareFault
 from monitoni.hardware.mock import MockHardware
 from monitoni.purchase import MockPurchaseServer
 from monitoni.web.server import qr_data
+from tests.helpers import command, events, status, wait_for_state, wait_until
 
-STATUS_KEYS = {"machine_id", "hardware_mode", "uptime_s", "state", "selected_level",
-               "purchase_id", "levels", "doors", "countdown_s", "qr_url", "maintenance_message"}
+STATUS_KEYS = {"machine_id", "hardware_mode", "uptime_s", "state", "reason", "selected_level",
+               "purchase_id", "levels", "doors", "countdown_s", "qr_url", "maintenance_message",
+               "hardware", "motor"}
+
+
+class FailingMotor(MockHardware):
+    async def set_motor(self, on: bool) -> None:
+        if on:
+            raise HardwareError("relay_core: no response")
+        await super().set_motor(on)
 
 
 @pytest.fixture
 async def make_daemon(make_config):
     started = []
 
-    async def _make(mode: str = "mock", **timings: float) -> Daemon:
+    async def _make(mode: str = "mock", hardware_cls=MockHardware, maintenance: bool = False,
+                    **timings: float) -> Daemon:
         config = make_config(**timings)
         config.hardware.mode = mode
-        daemon = Daemon(config, MockHardware(config.vending.levels), MockPurchaseServer())
+        config.system.maintenance_mode = maintenance
+        daemon = Daemon(config, hardware_cls(config.vending.levels), MockPurchaseServer())
+        daemon.recovery_check_s = 0.02
         await daemon.start()
         started.append(daemon)
         return daemon
@@ -36,39 +49,12 @@ async def daemon(make_daemon):
     return await make_daemon()
 
 
-@pytest.fixture
-async def client():
-    async with aiohttp.ClientSession() as session:
-        yield session
-
-
-async def command(client, daemon, **body):
-    async with client.post(daemon.url + "/api/command", json=body) as resp:
-        return resp.status, await resp.json()
-
-
-async def status(client, daemon):
-    async with client.get(daemon.url + "/api/status") as resp:
-        assert resp.status == 200
-        return await resp.json()
-
-
-async def wait_for_state(client, daemon, state, timeout=2.0):
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        current = await status(client, daemon)
-        if current["state"] == state:
-            return current
-        if asyncio.get_running_loop().time() > deadline:
-            raise AssertionError(f"expected {state}, still in {current['state']}")
-        await asyncio.sleep(0.01)
-
-
 async def test_status_endpoint(client, daemon):
     body = await status(client, daemon)
     assert set(body) == STATUS_KEYS
-    assert body["state"] == "idle" and body["hardware_mode"] == "mock"
+    assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
     assert body["levels"] == 10 and set(body["doors"]) == {str(n) for n in range(1, 11)}
+    assert body["hardware"]["mode"] == "mock" and body["motor"]["running"] is False
     assert set(body["doors"].values()) == {"locked"}
     assert body["qr_url"] is None and body["selected_level"] is None
     assert body["countdown_s"] is not None  # idle has a sleep timeout
@@ -207,3 +193,99 @@ async def test_stop_closes_open_websockets(client, make_config):
     msg = await ws.receive(timeout=5)
     assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
     await ws.close()
+
+
+# -- motor commands ------------------------------------------------------------
+
+def switches(daemon) -> list[str]:
+    return [c for c in daemon.hardware.calls if c.startswith("set_")]
+
+
+async def test_motor_press_and_release(client, daemon):
+    code, body = await command(client, daemon, command="motor_press")
+    assert code == 200 and body["motor"] == {"pressed": True, "running": True, "spindle_open": True}
+    assert body["hardware"]["motor"] == {"running": True, "spindle_open": True}
+    code, body = await command(client, daemon, command="motor_release")
+    assert code == 200
+    assert body["motor"]["running"] is False and body["motor"]["spindle_open"] is False
+    assert switches(daemon) == ["set_spindle(True)", "set_motor(True)",
+                                "set_motor(False)", "set_spindle(False)"]
+    rows = [r["details"] for r in reversed(await events(client, daemon)) if r["kind"] == "motor"]
+    assert rows == [{"event": "start"}, {"event": "stop", "reason": "release"}]
+
+
+async def test_motor_commands_only_in_idle(client, daemon):
+    await command(client, daemon, command="select_level", level=1)
+    for cmd in ("motor_press", "motor_release"):
+        code, body = await command(client, daemon, command=cmd)
+        assert code == 409 and "only allowed in state idle" in body["error"], cmd
+    assert switches(daemon) == []
+
+
+async def test_leaving_idle_stops_the_motor(client, daemon):
+    await command(client, daemon, command="motor_press")
+    await command(client, daemon, command="select_level", level=2)
+    await wait_until(lambda: not daemon.motor.active, "motor stop")
+    assert switches(daemon)[-2:] == ["set_motor(False)", "set_spindle(False)"]
+    rows = [r["details"] for r in await events(client, daemon) if r["kind"] == "motor"]
+    assert rows[0] == {"event": "stop", "reason": "leave_idle"}
+
+
+async def test_last_websocket_closing_stops_the_motor(client, daemon):
+    ws = await client.ws_connect(daemon.url + "/ws")
+    await ws.receive_json(timeout=2)
+    await command(client, daemon, command="motor_press")
+    await ws.close()
+    await wait_until(lambda: not daemon.motor.active, "motor stop")
+    rows = [r["details"] for r in await events(client, daemon) if r["kind"] == "motor"]
+    assert rows[0] == {"event": "stop", "reason": "ws_closed"}
+
+
+async def test_daemon_stop_stops_the_motor(client, make_config):
+    config = make_config()
+    hardware = MockHardware(config.vending.levels)
+    daemon = Daemon(config, hardware, MockPurchaseServer())
+    await daemon.start()
+    await command(client, daemon, command="motor_press")
+    await daemon.stop()
+    calls = hardware.calls
+    assert calls.index("set_motor(False)") < calls.index("stop")
+
+
+async def test_motor_hardware_error_is_503_and_faults(client, make_daemon):
+    daemon = await make_daemon(hardware_cls=FailingMotor)
+    daemon.hardware.is_healthy = False  # otherwise the mock recovers in the same drainer pass
+    code, body = await command(client, daemon, command="motor_press")
+    assert code == 503 and "no response" in body["error"]
+    body = await wait_for_state(client, daemon, "out_of_order")
+    assert body["reason"] == "hardware" and body["motor"]["running"] is False
+    rows = await events(client, daemon)
+    fault = [r for r in rows if r["kind"] == "hardware" and r["details"].get("event") == "fault"]
+    assert fault and fault[0]["details"]["error"].startswith("motor: ")
+
+
+# -- hardware fault and recovery over the queue -----------------------------------
+
+async def test_hardware_fault_and_recovery(client, daemon):
+    daemon.hardware.is_healthy = False
+    daemon.hardware.events.put_nowait(HardwareFault("relay_core: connection closed by the module"))
+    body = await wait_for_state(client, daemon, "out_of_order")
+    assert body["reason"] == "hardware" and set(body["doors"].values()) == {"locked"}
+    await asyncio.sleep(0.1)
+    assert (await status(client, daemon))["state"] == "out_of_order"  # not healthy yet
+    daemon.hardware.is_healthy = True
+    body = await wait_for_state(client, daemon, "idle")
+    assert body["reason"] is None
+    rows = await events(client, daemon)
+    fault = [r for r in rows if r["kind"] == "hardware" and r["details"]["event"] == "fault"]
+    assert fault and fault[0]["details"]["error"].startswith("relay_core:")
+    transitions = [r["details"]["event"] for r in reversed(rows) if r["kind"] == "transition"]
+    assert transitions == ["hardware_fault", "hardware_ok"]
+
+
+async def test_no_recovery_attempt_while_in_maintenance(client, make_daemon):
+    daemon = await make_daemon(maintenance=True)
+    await asyncio.sleep(0.1)
+    body = await status(client, daemon)
+    assert body["state"] == "out_of_order" and body["reason"] == "maintenance"
+    assert daemon.hardware.calls.count("lock_all_doors") == 1

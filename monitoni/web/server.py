@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 import qrcode
 from aiohttp import web
 
-from monitoni.flow import Event, IllegalTransition
+from monitoni.flow import Event, IllegalTransition, State
+from monitoni.hardware.base import HardwareError
 
 if TYPE_CHECKING:
     from monitoni.daemon import Daemon
@@ -88,6 +89,13 @@ async def api_command(request: web.Request) -> web.Response:
             await daemon.flow.dispatch(Event.CANCEL)
         elif command == "touch":
             await daemon.flow.dispatch(Event.TOUCH)
+        elif command in ("motor_press", "motor_release"):
+            if daemon.flow.state is not State.IDLE:
+                return error(409, f"{command} is only allowed in state idle")
+            if command == "motor_press":
+                await daemon.motor.press()
+            else:
+                await daemon.motor.release()
         elif command in ("simulate_payment", "simulate_door"):
             if daemon.config.hardware.mode != "mock":
                 return error(403, "simulate commands are only available in mock mode")
@@ -109,6 +117,8 @@ async def api_command(request: web.Request) -> web.Response:
         return error(400, str(exc))
     except IllegalTransition as exc:
         return error(409, str(exc))
+    except HardwareError as exc:
+        return error(503, str(exc))  # the motor has already stopped and queued the fault
     return web.json_response(daemon.status())
 
 
@@ -155,6 +165,8 @@ async def websocket(request: web.Request) -> web.WebSocketResponse:
     finally:
         request.app[WEBSOCKETS].discard(ws)
         log.debug("websocket closed (%d open)", len(request.app[WEBSOCKETS]))
+        if not request.app[WEBSOCKETS] and request.app[DAEMON].motor.active:
+            await request.app[DAEMON].stop_motor("ws_closed")  # nobody is holding the button
     return ws
 
 
@@ -162,8 +174,9 @@ async def broadcast(app: web.Application) -> None:
     """Push status to every socket on each state change, and at least every HEARTBEAT_S."""
     daemon = app[DAEMON]
     while True:
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(daemon.changed.wait(), timeout=HEARTBEAT_S)
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(HEARTBEAT_S):
+                await daemon.changed.wait()
         daemon.changed.clear()
         payload = daemon.status()
         for ws in set(app[WEBSOCKETS]):

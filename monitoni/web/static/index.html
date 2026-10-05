@@ -17,6 +17,7 @@
     <section data-state="idle">
       <h1>Select a level</h1>
       <div id="levels" class="levels"></div>
+      <button id="turn">TURN</button>
     </section>
 
     <section data-state="sleep" id="sleep">
@@ -51,6 +52,7 @@
     <section data-state="out_of_order">
       <h1>Out of order</h1>
       <p id="maintenance_message"></p>
+      <p id="reason"></p>
     </section>
   </main>
 
@@ -63,6 +65,8 @@
     </div>
     <p>Doors: <span id="doors"></span></p>
     <p>Purchase: <span id="purchase_id">–</span></p>
+    <p>Motor: <span id="motor"></span></p>
+    <pre id="hardware"></pre>
     <ol id="events" reversed></ol>
   </aside>
 

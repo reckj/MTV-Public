@@ -65,6 +65,23 @@ button {
   gap: 12px;
 }
 
+#turn {
+  display: block;
+  width: 100%;
+  margin-top: 24px;
+  padding: 48px 16px;
+  font-size: 40px;
+  font-weight: bold;
+  background: #e8503a;
+  touch-action: none;       /* no scrolling or long-press menus while holding */
+  user-select: none;
+  -webkit-user-select: none;
+}
+body[data-motor="pressed"] #turn { background: #7a2a1e; }
+body[data-motor="running"] #turn { background: #222; color: #e8503a; }
+
+#reason { color: #f90; }
+
 #qr {
   display: block;
   width: 280px;
@@ -89,6 +106,13 @@ body[data-state="door_alarm"] main { background: #a00; }
 #dev h2 { font-size: 16px; margin: 0 0 8px; }
 #dev .row { display: flex; gap: 8px; flex-wrap: wrap; }
 #dev button { padding: 8px 10px; font-size: 14px; background: #555; }
+#hardware {
+  margin: 8px 0 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #aaa;
+  white-space: pre-wrap;
+}
 #events {
   margin: 8px 0 0;
   padding-left: 28px;
