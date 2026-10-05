@@ -3,6 +3,7 @@
 Transitions are a table. One timeout at a time, cancelled on every transition.
 All hardware side effects live in `_enter` and `_leave`; `unlock_door` is called
 from exactly one place, every lock goes through the idle/out_of_order hook.
+A hardware error inside a hook ends in out_of_order with reason "hardware".
 """
 
 import asyncio
@@ -13,7 +14,7 @@ from enum import StrEnum
 
 from monitoni.config import Config
 from monitoni.eventlog import EventLog
-from monitoni.hardware.base import Hardware
+from monitoni.hardware.base import Hardware, HardwareError
 from monitoni.purchase import PurchaseServer
 
 log = logging.getLogger(__name__)
@@ -41,7 +42,13 @@ class Event(StrEnum):
     COMPLETE = "complete"
     TIMEOUT = "timeout"
     RESET = "reset"
+    HARDWARE_FAULT = "hardware_fault"
+    HARDWARE_OK = "hardware_ok"
 
+
+# why the machine is out_of_order
+REASON_MAINTENANCE = "maintenance"  # config flag, later the settings area; never clears itself
+REASON_HARDWARE = "hardware"  # automatic; clears itself once the hardware is healthy again
 
 TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.IDLE, Event.SELECT_LEVEL): State.CHECKING_PURCHASE,
@@ -58,9 +65,14 @@ TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.DOOR_OPENED, Event.TIMEOUT): State.DOOR_ALARM,
     (State.DOOR_ALARM, Event.DOOR_CLOSED): State.COMPLETING,
     (State.COMPLETING, Event.COMPLETE): State.IDLE,
+    # recovery from a hardware fault; dispatch() rejects it while the reason is maintenance
+    (State.OUT_OF_ORDER, Event.HARDWARE_OK): State.IDLE,
 }
 # reset aborts whatever is going on; out_of_order stays until the settings area lifts it
 TRANSITIONS.update({(s, Event.RESET): State.IDLE for s in State if s is not State.OUT_OF_ORDER})
+# a hardware fault ends in out_of_order from everywhere (in out_of_order it is a no-op)
+TRANSITIONS.update({(s, Event.HARDWARE_FAULT): State.OUT_OF_ORDER
+                    for s in State if s is not State.OUT_OF_ORDER})
 
 # which config timing applies when a state is entered
 TIMEOUTS: dict[State, str] = {
@@ -88,6 +100,7 @@ class Flow:
         self.on_change = on_change or (lambda: None)
 
         self.state = State.IDLE
+        self.reason: str | None = None  # while out_of_order: maintenance | hardware
         self.selected_level: int | None = None
         self.purchase_id: str | None = None
 
@@ -101,11 +114,19 @@ class Flow:
 
     async def start(self) -> None:
         async with self._lock:
-            initial = State.OUT_OF_ORDER if self.config.system.maintenance_mode else State.IDLE
+            if self.config.system.maintenance_mode:
+                initial, self.reason = State.OUT_OF_ORDER, REASON_MAINTENANCE
+            else:
+                initial, self.reason = State.IDLE, None
             log.info("flow starting in %s", initial.value)
-            await self._enter(initial)
+            try:
+                await self._enter(initial)
+            except Exception as exc:
+                await self._fault(initial, exc)
+                initial = State.OUT_OF_ORDER
             self.state = initial
-            await self.events.write("daemon", initial.value, details={"event": "start"})
+            await self.events.write("daemon", initial.value,
+                                    details={"event": "start", "reason": self.reason})
         self.on_change()
 
     async def stop(self) -> None:
@@ -126,6 +147,7 @@ class Flow:
         countdown = self.countdown_s
         return {
             "state": self.state.value,
+            "reason": self.reason,
             "selected_level": self.selected_level,
             "purchase_id": self.purchase_id,
             "countdown_s": None if countdown is None else round(countdown, 1),
@@ -134,7 +156,7 @@ class Flow:
     # -- events in -----------------------------------------------------------
 
     async def dispatch(self, event: Event, level: int | None = None,
-                       purchase_id: str | None = None) -> None:
+                       purchase_id: str | None = None, error: str | None = None) -> None:
         """Apply an event. Raises IllegalTransition (logged) if the table has no entry."""
         async with self._lock:
             if event is Event.TOUCH and self.state is not State.SLEEP:
@@ -143,9 +165,14 @@ class Flow:
                     self._start_timeout(self.state)
                 await self.events.write("command", self.state.value, details={"event": "touch"})
                 return
+            if event is Event.HARDWARE_FAULT and self.state is State.OUT_OF_ORDER:
+                # already there; a maintenance reason is kept
+                log.warning("hardware fault while out_of_order (%s): %s", self.reason, error)
+                return
 
             new_state = TRANSITIONS.get((self.state, event))
-            if new_state is None:
+            if new_state is None or (event is Event.HARDWARE_OK
+                                     and self.reason != REASON_HARDWARE):
                 log.warning("rejected %s in state %s", event.value, self.state.value)
                 await self.events.write("rejected", self.state.value, level=self.selected_level,
                                         purchase_id=self.purchase_id,
@@ -158,43 +185,74 @@ class Flow:
                 self.selected_level = level
             if event is Event.PURCHASE_VALID and purchase_id is not None:
                 self.purchase_id = purchase_id
+            if event is Event.HARDWARE_FAULT:
+                self.reason = REASON_HARDWARE
 
-            await self._transition(new_state, event)
+            await self._transition(new_state, event, error)
         self.on_change()
 
     # -- transition machinery ------------------------------------------------
 
-    async def _transition(self, new_state: State, event: Event) -> None:
+    async def _transition(self, new_state: State, event: Event, error: str | None = None) -> None:
         """Leave the old state, enter the new one, then make it visible.
 
         Invariant: status never shows a state whose entry hook has not completed.
         `self.state` is assigned right after `_enter` returns, with no await in
         between, so the tasks `_enter` starts never observe the old state. The
         transition row is written after that; `dispatch` notifies once the lock is
-        released. A hook that raises leaves the state unchanged (hardware errors in
-        hooks are an open decision, see CLAUDE.md).
+        released. A hook that raises ends in out_of_order (hardware) instead.
         """
         old_state = self.state
         level, purchase_id = self.selected_level, self.purchase_id  # before the hooks change them
         log.info("%s --%s--> %s", old_state.value, event.value, new_state.value)
         self._cancel_tasks()
-        await self._leave(old_state)
-        await self._enter(new_state)
+        try:
+            await self._leave(old_state)
+            await self._enter(new_state)
+        except Exception as exc:
+            await self._fault(new_state, exc)
+            self.state = State.OUT_OF_ORDER
+            await self.events.write("transition", self.state.value, level=level,
+                                    purchase_id=purchase_id,
+                                    details={"from": old_state.value, "to": self.state.value,
+                                             "event": Event.HARDWARE_FAULT.value,
+                                             "attempted": new_state.value, "error": str(exc)})
+            return
         self.state = new_state
+        details = {"from": old_state.value, "to": new_state.value, "event": event.value}
+        if error is not None:
+            details["error"] = error
         await self.events.write("transition", new_state.value, level=level,
-                                purchase_id=purchase_id,
-                                details={"from": old_state.value, "to": new_state.value,
-                                         "event": event.value})
+                                purchase_id=purchase_id, details=details)
+
+    async def _fault(self, attempted: State, exc: Exception) -> None:
+        """Entering `attempted` failed: become out_of_order (hardware). Called under the lock."""
+        if isinstance(exc, HardwareError):
+            log.error("hardware error entering %s: %s", attempted.value, exc)
+        else:
+            log.error("bug: entering %s raised %r", attempted.value, exc, exc_info=exc)
+        self.reason = REASON_HARDWARE
+        self._cancel_tasks()
+        await self._enter(State.OUT_OF_ORDER)  # never raises
 
     async def _leave(self, state: State) -> None:
         if state is State.DOOR_ALARM:
             await self.hardware.alarm(False)
 
     async def _enter(self, state: State) -> None:
-        if state in (State.IDLE, State.OUT_OF_ORDER):
+        if state is State.OUT_OF_ORDER:
+            try:
+                await self.hardware.lock_all_doors()
+            except Exception as exc:
+                log.error("cannot lock doors while entering out_of_order: %s", exc,
+                          exc_info=not isinstance(exc, HardwareError))
+            self.selected_level = None
+            self.purchase_id = None
+        elif state is State.IDLE:
             await self.hardware.lock_all_doors()
             self.selected_level = None
             self.purchase_id = None
+            self.reason = None
             # hook: LED idle animation (later milestone)
         elif state is State.CHECKING_PURCHASE:
             self.purchase_id = uuid.uuid4().hex

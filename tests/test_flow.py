@@ -1,11 +1,22 @@
 import asyncio
+import logging
 
 import pytest
 
 from monitoni.eventlog import EventLog
-from monitoni.flow import TRANSITIONS, Event, Flow, IllegalTransition, State
+from monitoni.flow import (
+    REASON_HARDWARE,
+    REASON_MAINTENANCE,
+    TRANSITIONS,
+    Event,
+    Flow,
+    IllegalTransition,
+    State,
+)
+from monitoni.hardware.base import HardwareError
 from monitoni.hardware.mock import MockHardware
 from monitoni.purchase import MockPurchaseServer
+from tests.helpers import wait_until
 
 ALLOWED = sorted(TRANSITIONS.items(), key=lambda kv: (kv[0][0].value, kv[0][1].value))
 REJECTED = [
@@ -45,14 +56,6 @@ async def make_flow(make_config):
         await events.stop()
 
 
-async def wait_until(predicate, what: str, timeout: float = 2.0) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while not predicate():
-        if asyncio.get_running_loop().time() > deadline:
-            raise AssertionError(f"timed out waiting for {what}")
-        await asyncio.sleep(0.005)
-
-
 async def wait_for(flow: Flow, state: State) -> None:
     """Wait until the flow reports `state`; by then its entry hook has completed."""
     await wait_until(lambda: flow.state is state, state.value)
@@ -61,6 +64,8 @@ async def wait_for(flow: Flow, state: State) -> None:
 async def force(flow: Flow, state: State) -> None:
     """Put the flow into a state without walking there (test only)."""
     flow.selected_level = 3
+    if state is State.OUT_OF_ORDER:
+        flow.reason = REASON_HARDWARE
     async with flow._lock:
         await flow._transition(state, Event.RESET)
 
@@ -254,3 +259,97 @@ async def test_state_changes_only_after_entry_hook_completed(make_flow):
     flow.hardware.release.set()
     await dispatching
     assert flow.state is State.DOOR_UNLOCKED and not flow.hardware.door_locked(3)
+
+
+# -- hardware fault and recovery ------------------------------------------------
+
+class FailingUnlock(MockHardware):
+    async def unlock_door(self, level: int) -> None:
+        self._record(f"unlock_door({level}) failed")
+        raise HardwareError("relay_levels: no response within 1.0s")
+
+
+class BuggyUnlock(MockHardware):
+    async def unlock_door(self, level: int) -> None:
+        raise RuntimeError("oops")
+
+
+class NoLock(MockHardware):
+    async def lock_all_doors(self) -> None:
+        self._record("lock_all_doors failed")
+        raise HardwareError("relay_levels: not connected")
+
+
+@pytest.mark.parametrize("state", [s for s in State if s is not State.OUT_OF_ORDER],
+                         ids=[s.value for s in State if s is not State.OUT_OF_ORDER])
+async def test_hardware_fault_from_every_state(make_flow, state):
+    flow = await make_flow()
+    await force(flow, state)
+    await flow.dispatch(Event.HARDWARE_FAULT, error="relay_core: connection closed")
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    assert flow.selected_level is None and flow.purchase_id is None and flow.countdown_s is None
+    assert_all_locked(flow)
+    row = (await flow.events.recent(1))[0]
+    assert row["kind"] == "transition" and row["details"]["event"] == "hardware_fault"
+    assert row["details"]["error"] == "relay_core: connection closed"
+    assert flow.status()["reason"] == "hardware"
+
+
+async def test_hardware_ok_returns_to_idle(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.HARDWARE_FAULT, error="x")
+    await flow.dispatch(Event.HARDWARE_OK)
+    assert flow.state is State.IDLE and flow.reason is None and flow.countdown_s is not None
+    assert_all_locked(flow)
+
+
+async def test_hardware_ok_does_not_clear_maintenance(make_flow):
+    flow = await make_flow(maintenance=True)
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_MAINTENANCE
+    with pytest.raises(IllegalTransition):
+        await flow.dispatch(Event.HARDWARE_OK)
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_MAINTENANCE
+
+
+async def test_fault_while_out_of_order_keeps_the_reason(make_flow):
+    flow = await make_flow(maintenance=True)
+    rows_before = len(await flow.events.recent(100))
+    await flow.dispatch(Event.HARDWARE_FAULT, error="x")  # accepted, no transition
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_MAINTENANCE
+    assert len(await flow.events.recent(100)) == rows_before
+
+
+async def test_entry_hook_hardware_error_goes_out_of_order(make_flow):
+    flow = await make_flow(hardware_cls=FailingUnlock)
+    await flow.dispatch(Event.SELECT_LEVEL, level=3)
+    await flow.dispatch(Event.PURCHASE_VALID, purchase_id="srv-1")
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    assert flow.countdown_s is None
+    assert_all_locked(flow)
+    details = (await flow.events.recent(1))[0]["details"]
+    assert details["from"] == "checking_purchase" and details["to"] == "out_of_order"
+    assert details["event"] == "hardware_fault" and details["attempted"] == "door_unlocked"
+    assert "no response" in details["error"]
+
+
+async def test_entry_hook_bug_goes_out_of_order_with_traceback(make_flow, caplog):
+    flow = await make_flow(hardware_cls=BuggyUnlock)
+    await flow.dispatch(Event.SELECT_LEVEL, level=3)
+    with caplog.at_level(logging.ERROR, logger="monitoni.flow"):
+        await flow.dispatch(Event.PURCHASE_VALID, purchase_id="srv-1")
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    bug = [r for r in caplog.records if r.getMessage().startswith("bug: entering door_unlocked")]
+    assert bug and bug[0].exc_info is not None
+
+
+async def test_lock_failure_entering_out_of_order_is_logged_not_raised(make_flow, caplog):
+    with caplog.at_level(logging.ERROR, logger="monitoni.flow"):
+        flow = await make_flow(hardware_cls=NoLock)  # idle entry fails at start
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    assert "cannot lock doors while entering out_of_order" in caplog.text
+    start_row = (await flow.events.recent(1))[0]
+    assert start_row["kind"] == "daemon" and start_row["state"] == "out_of_order"
+    assert start_row["details"] == {"event": "start", "reason": "hardware"}
+    await flow.dispatch(Event.HARDWARE_OK)  # recovery attempt fails the same way, stays put
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    assert flow.hardware.calls.count("lock_all_doors failed") == 4  # idle, ooo, idle, ooo
