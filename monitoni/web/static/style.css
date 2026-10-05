@@ -1,0 +1,55 @@
+/* Placeholder styling: readable on a 400x1280 portrait display, nothing more. */
+html, body {
+  margin: 0;
+  background: #111;
+  color: #eee;
+  font-family: system-ui, sans-serif;
+  font-size: 20px;
+}
+
+main {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+h1 {
+  font-size: 32px;
+  margin: 0 0 16px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  margin: 24px 0;
+}
+
+dt {
+  color: #999;
+}
+
+dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+#connection {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+#connection.connected {
+  background: #1e6b2e;
+}
+
+#connection.disconnected {
+  background: #8b1a1a;
+}
+
+.note {
+  color: #777;
+  font-size: 16px;
+}

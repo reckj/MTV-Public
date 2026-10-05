@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MoniToni</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>MoniToni</h1>
+    <p id="connection" class="disconnected">disconnected</p>
+    <dl>
+      <dt>Machine</dt>
+      <dd id="machine_id">–</dd>
+      <dt>Hardware</dt>
+      <dd id="hardware_mode">–</dd>
+      <dt>State</dt>
+      <dd id="state">–</dd>
+      <dt>Uptime</dt>
+      <dd id="uptime_s">–</dd>
+    </dl>
+    <p class="note">Placeholder page. The daemon pushes status over a WebSocket every 2 s.</p>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
