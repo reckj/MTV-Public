@@ -63,7 +63,8 @@ purchase_server:
   timeout_s: 5.0
 
 qr:
-  # QR for level N encodes base_url + "/" + machine_id + "/" + N
+  # QR for level N encodes base_url + "?level=" + N: the old machines' pattern, which the
+  # purchase server expects. The machine id is sent with the purchase check, not in the QR.
   base_url: "https://www.monitoni.zhdk.ch"
   dir: "data/qr"          # generated PNGs; relative paths are resolved from the repo root
 

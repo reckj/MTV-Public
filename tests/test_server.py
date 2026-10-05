@@ -8,6 +8,7 @@ import pytest
 from monitoni.daemon import Daemon
 from monitoni.hardware.mock import MockHardware
 from monitoni.purchase import MockPurchaseServer
+from monitoni.web.server import qr_data
 
 STATUS_KEYS = {"machine_id", "hardware_mode", "uptime_s", "state", "selected_level",
                "purchase_id", "levels", "doors", "countdown_s", "qr_url", "maintenance_message"}
@@ -174,6 +175,10 @@ async def test_qr_png(client, daemon):
     for bad in ("0", "11", "abc"):
         async with client.get(daemon.url + f"/api/qr/{bad}.png") as resp:
             assert resp.status == 404, bad
+
+
+def test_qr_data_matches_the_old_machines():
+    assert qr_data("https://www.monitoni.zhdk.ch", 3) == "https://www.monitoni.zhdk.ch?level=3"
 
 
 async def test_events_limit(client, daemon):

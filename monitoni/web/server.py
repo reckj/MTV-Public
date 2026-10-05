@@ -121,10 +121,17 @@ async def api_qr(request: web.Request) -> web.StreamResponse:
         return error(404, f"level must be 1..{daemon.config.vending.levels}")
     path = daemon.config.qr.dir / f"level_{level}.png"
     if not path.exists():
-        data = f"{daemon.config.qr.base_url}/{daemon.config.system.machine_id}/{level}"
+        data = qr_data(daemon.config.qr.base_url, level)
         await asyncio.to_thread(write_qr_png, data, path)
         log.info("generated %s for %s", path, data)
     return web.FileResponse(path)
+
+
+def qr_data(base_url: str, level: int) -> str:
+    """What the QR code for a level encodes: the old machines' pattern, which the
+    existing purchase server expects. The machine id travels in the purchase check
+    request, not in the QR."""
+    return f"{base_url}?level={level}"
 
 
 def write_qr_png(data: str, path: Path) -> None:

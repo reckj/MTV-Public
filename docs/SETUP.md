@@ -68,13 +68,14 @@ Keys an installer must set in `config/local.yaml` so far (copy
 `config/local.yaml.example` as a start; every key not listed keeps its value
 from `config/default.yaml`):
 
-- `system.machine_id` — this machine's id, also part of every QR code.
+- `system.machine_id` — this machine's id, sent with every purchase check.
 - `hardware.relay_core.host`, `hardware.relay_levels.host`,
   `hardware.wled.ip_address` — the modules' IP addresses.
 - `purchase_server.base_url` — where purchases are verified.
-- `qr.base_url` — the QR code for level N encodes
-  `<qr.base_url>/<machine_id>/<N>`. Generated PNGs land in `data/qr/`;
-  delete a file there to regenerate it after changing either value.
+- `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
+  the same pattern as the old machines (no machine id). Generated PNGs land
+  in `data/qr/`; delete a file there to regenerate it after changing the
+  value.
 
 On the development laptop none of these are set; mock mode runs on the
 defaults. Setting them on a Pi: _to be written during integration._
