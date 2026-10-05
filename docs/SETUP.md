@@ -64,7 +64,20 @@ integration._
 `config/local.yaml`: machine id, relay module IPs, WLED IP, purchase server
 URL, settings PIN.
 
-_To be written during integration._
+Keys an installer must set in `config/local.yaml` so far (copy
+`config/local.yaml.example` as a start; every key not listed keeps its value
+from `config/default.yaml`):
+
+- `system.machine_id` — this machine's id, also part of every QR code.
+- `hardware.relay_core.host`, `hardware.relay_levels.host`,
+  `hardware.wled.ip_address` — the modules' IP addresses.
+- `purchase_server.base_url` — where purchases are verified.
+- `qr.base_url` — the QR code for level N encodes
+  `<qr.base_url>/<machine_id>/<N>`. Generated PNGs land in `data/qr/`;
+  delete a file there to regenerate it after changing either value.
+
+On the development laptop none of these are set; mock mode runs on the
+defaults. Setting them on a Pi: _to be written during integration._
 
 ## 7. First start
 
@@ -78,9 +91,16 @@ cd monitoni
 .venv/bin/python -m monitoni --mock
 ```
 
-Then open http://127.0.0.1:8080/ in a browser. The page shows the machine id,
-hardware mode (`mock`), state and uptime, and a green "connected" badge. Stop
-the daemon with Ctrl+C; it logs "shutdown requested" and exits.
+Then open http://127.0.0.1:8080/ in a browser. The page shows the current
+state in the header with a green "connected" badge, level buttons 1 to 10 in
+`idle`, the QR code and a cancel button after selecting a level, the door
+instructions while a door is open, a red screen when the door alarm is on and
+a dark screen in sleep (tap to wake). Because hardware mode is `mock`, a dev
+panel at the bottom offers "Simulate payment", "Door open" and "Door close"
+and lists the last 20 events. Walk the flow: select a level, simulate payment,
+door open, door close, back to idle. Every step is written to
+`data/monitoni.db`. Stop the daemon with Ctrl+C; it logs "shutdown requested"
+and exits.
 
 Starting without `--mock` while `hardware.mode` is `real` refuses to run if
 `config/local.yaml` is missing.

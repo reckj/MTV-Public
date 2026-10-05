@@ -26,8 +26,10 @@ for years: pinned versions, frozen OS image, no auto-updates.
 ## Folder layout
 
 - `monitoni/` — the daemon. `__main__.py` entry point, `config.py`,
-  `daemon.py`, `hardware/` (one implementation per mode), `web/` (aiohttp
-  routes and `static/` UI files).
+  `daemon.py` (owns everything, forwards hardware events), `flow.py` (state
+  machine: transition table, timeouts, entry hooks), `purchase.py` (purchase
+  server protocol + mock), `eventlog.py` (SQLite event log), `hardware/` (one
+  implementation per mode), `web/` (aiohttp routes and `static/` UI files).
 - `config/` — `default.yaml` (checked in) and `local.yaml` (per machine).
 - `tests/` — pytest.
 - `docs/SETUP.md` — installation guide, grows with every integration step.
@@ -42,6 +44,12 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - Config validation errors name the offending key.
 - `default.yaml` is the production configuration; development always runs with
   `--mock`.
+- Door lock rule: every entry into `idle` or `out_of_order` locks all doors in
+  the one entry hook; `unlock_door` is called from exactly one place
+  (`door_unlocked` entry). Nothing locks "on the way".
+- Commands come in over `POST /api/command`; status goes out over the
+  WebSocket (on every state change plus a 1 s heartbeat). The socket is
+  one-way.
 - stdlib `logging` to stdout only; journald captures it on the machine.
 - English only, code and docs. Code stays Python 3.11 compatible.
 
