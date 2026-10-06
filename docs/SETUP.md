@@ -23,16 +23,19 @@ Facts so far (no hardware has been set up on a Pi yet):
   1. **Config → LED Preferences**: set the LED count ("Length") to at least
      the number of pixels on the strip (`hardware.wled.pixel_count`). Save.
   2. **Config → Sync Interfaces**, section **Realtime**: tick "Receive UDP
-     realtime"; under "Network DMX input" choose Type **Art-Net**, Port
-     **6454**, Multicast off, Start universe **0** (the value of
+     realtime"; under "Network DMX input" choose Type **Art-Net** (the Port
+     field is then greyed out or gone: Art-Net always uses 6454, do not look
+     for it), Multicast off, Start universe **0** (the value of
      `hardware.wled.universe`), DMX start address **1**, DMX mode **Multi
      RGB**, Timeout **2500** ms, tick **Force max brightness**, untick "Disable
      realtime gamma correction" unless the colours look wrong. Save.
   3. Leave the controller's own effect on something dark (Config → LED
      Preferences → "Turn LEDs on after power up/reset" off, or a dark default
-     preset): that is what the strip shows while the daemon is not running.
-     While the daemon runs it sends a frame at least once a second, which is
-     what the 2500 ms timeout is for.
+     preset). The daemon switches the strip off when it is stopped cleanly;
+     after a crash or a pulled cable the strip keeps its last frame until the
+     2500 ms timeout and then shows the controller's own state, so that state
+     should be dark. While the daemon runs it sends a frame at least once a
+     second, which is what the timeout is for.
   "Multi RGB" means three DMX channels per pixel, red, green, blue; a strip of
   more than 170 pixels continues in the next universe, which WLED handles by
   itself. "Force max brightness" makes the daemon's `led.brightness` the only
@@ -222,8 +225,15 @@ shows the same as "LEDs: idle · level – · reachable". For audio the start
 log says `audio: 44100 Hz, 2 channel(s), sounds from …`; `audio unavailable,
 sounds are off: <error>` means no audio device was found (on the Pi: check
 that HDMI audio is enabled and the display or an amplifier is connected). A
-dead strip or missing audio never stops the machine from vending. _Setting up
-HDMI audio on the Pi: to be written during integration._
+dead strip or missing audio never stops the machine from vending.
+
+_HDMI audio on the Pi is not resolved yet._ On Raspberry Pi OS Bookworm sound
+goes through PipeWire, which runs per logged-in user, so whether the daemon
+finds the HDMI output depends on which user it runs as. The Pi milestone
+decides between running the daemon as the kiosk user (the one with the
+PipeWire session) and bypassing PipeWire with `SDL_AUDIODRIVER=alsa` plus
+`AUDIODEV` pinned to the HDMI device in the systemd unit. Nothing about this
+can be settled on the laptop.
 
 _Real hardware start on a Pi: to be written during integration._
 

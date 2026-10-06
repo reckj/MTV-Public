@@ -10,8 +10,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
   machine, config and the SQLite database. Modbus RTU frames over plain TCP are
   built by hand (no pymodbus; Waveshare transparent mode has no MBAP header).
 - aiohttp: static web UI, localhost API, WebSocket. httpx: purchase server client
-  and the WLED health poll. stupidArtnet: ArtNet frames to the LED strip.
-  pygame.mixer: the three sounds over HDMI.
+  and the WLED health poll. ArtDMX packets to the LED strip are built by hand
+  and sent from one UDP socket (no stupidArtnet). pygame.mixer: the three sounds.
 - pyyaml + pydantic v2 for config (`config/default.yaml`, overlaid by the
   gitignored `config/local.yaml`). aiosqlite for the event log.
 - Front-end: plain HTML/JS/CSS, no framework, no build step. Chromium in
