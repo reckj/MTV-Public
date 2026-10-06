@@ -18,6 +18,7 @@ from aiohttp import web
 
 from monitoni.flow import DoorOpen, Event, IllegalTransition, State
 from monitoni.hardware.base import HardwareError
+from monitoni.motor import MotorBusy
 from monitoni.purchase import PurchaseServerError
 from monitoni.web.common import DAEMON, error
 
@@ -31,10 +32,6 @@ DEFAULT_PIN = "0000"
 
 class WrongPin(Exception):
     pass
-
-
-class Refused(Exception):
-    """The request is well-formed but not possible right now (409)."""
 
 
 # -- helpers ----------------------------------------------------------------------
@@ -76,8 +73,8 @@ def _rgb(body: dict) -> tuple[int, int, int] | None:
 
 async def enter(daemon: "Daemon", body: dict) -> None:
     pin = body.get("pin")
-    if not isinstance(pin, str):
-        raise ValueError("pin must be a string")
+    if not isinstance(pin, str) or not pin.isascii() or not pin.isdigit():
+        raise ValueError("pin must be a string of digits")
     if not secrets.compare_digest(pin, daemon.config.settings.pin):
         raise WrongPin()
     await daemon.flow.dispatch(Event.ENTER_SETTINGS)
@@ -121,10 +118,8 @@ async def lock_all(daemon: "Daemon", body: dict) -> None:
 
 
 async def spindle(daemon: "Daemon", body: dict) -> None:
-    open_ = _bool(body, "open")
-    if daemon.motor.active:
-        raise Refused("the motor sequence is running; release TURN first")
-    await daemon.hardware.set_spindle(open_)
+    """Through the motor module, the one owner of the spindle state (MotorBusy while TURN runs)."""
+    await daemon.motor.set_spindle(_bool(body, "open"))
 
 
 async def leds(daemon: "Daemon", body: dict) -> None:
@@ -210,7 +205,7 @@ async def api_settings(request: web.Request) -> web.Response:
         log.warning("settings: wrong PIN")
         await daemon.events.write("command", state, details={"tool": name, "accepted": False})
         return error(403, "wrong PIN")
-    except (IllegalTransition, DoorOpen, Refused) as exc:
+    except (IllegalTransition, DoorOpen, MotorBusy) as exc:
         return error(409, str(exc))
     except HardwareError as exc:
         log.error("settings %s failed: %s", name, exc)

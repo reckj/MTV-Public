@@ -4,8 +4,10 @@ press   -> spindle lock ON -> spindle_pre_delay_ms -> motor ON
 release -> spin_after_release_ms -> motor OFF -> spindle_post_delay_ms -> spindle lock OFF
 
 The motor always stops: on release, after max_run_s without a release (watchdog), and via
-`stop()`, which the daemon calls on leaving idle, when the last WebSocket closes and on daemon
-stop. `stop()` runs the release sequence at once, without spin_after_release_ms.
+`stop()`, which the daemon calls on every flow transition (a TURN held across Exit ends there),
+when the last WebSocket closes and on daemon stop. `stop()` runs the release sequence at once,
+without spin_after_release_ms, and closes the spindle lock whatever opened it: this module is
+the one owner of the spindle state, the settings tool goes through `set_spindle`.
 """
 
 import asyncio
@@ -18,6 +20,10 @@ from monitoni.eventlog import EventLog
 from monitoni.hardware.base import Hardware, HardwareError, HardwareFault
 
 log = logging.getLogger(__name__)
+
+
+class MotorBusy(Exception):
+    """set_spindle while a TURN sequence is pressed or running."""
 
 
 class Motor:
@@ -61,9 +67,27 @@ class Motor:
         await self._end(reason, immediate=False)
 
     async def stop(self, reason: str) -> None:
-        """Stop now, without spin_after_release_ms. Idempotent."""
+        """Stop now, without spin_after_release_ms, and close the spindle. Idempotent."""
         self._stop_now.set()
         await self._end(reason, immediate=True)
+
+    async def set_spindle(self, open_: bool) -> None:
+        """The settings tool: open or close the spindle lock on its own. Refused while a TURN
+        sequence is pressed or running; a HardwareError ends in the emergency stop like a
+        failed sequence."""
+        if self.pressed or self.running:
+            raise MotorBusy("the motor sequence is running; release TURN first")
+        async with self._lock:
+            if self.pressed or self.running:
+                raise MotorBusy("the motor sequence is running; release TURN first")
+            await self._guarded(self._spindle_only(open_))
+
+    async def _spindle_only(self, open_: bool) -> None:
+        await self.hardware.set_spindle(open_)
+        self.spindle_open = open_
+        self.on_change()
+        await self.events.write("motor", self.state_name(),
+                                details={"event": "spindle", "open": open_})
 
     async def _end(self, reason: str, *, immediate: bool) -> None:
         was_pressed, self.pressed = self.pressed, False

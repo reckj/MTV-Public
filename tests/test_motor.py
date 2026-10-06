@@ -138,3 +138,28 @@ async def test_hardware_error_switches_both_off_then_raises(make_motor):
     fault = motor.hardware.events.get_nowait()
     assert isinstance(fault, HardwareFault) and fault.message.startswith("motor: ")
     assert await motor_rows(motor) == []
+
+
+# -- the settings tool: set_spindle through the motor module -----------------------------
+
+async def test_set_spindle_is_the_one_owner_of_the_spindle_state(make_motor):
+    motor = await make_motor()
+    await motor.set_spindle(True)
+    assert motor.spindle_open and motor.active and motor.hardware.calls[-1] == "set_spindle(True)"
+    assert (await motor_rows(motor))[-1] == {"event": "spindle", "open": True}
+    await motor.set_spindle(False)
+    assert not motor.spindle_open and not motor.active
+    await motor.set_spindle(True)
+    await motor.stop("leave_settings")  # what the daemon does on every transition
+    assert not motor.spindle_open and motor.hardware.calls[-1] == "set_spindle(False)"
+
+
+async def test_set_spindle_is_refused_while_turn_is_held(make_motor):
+    from monitoni.motor import MotorBusy
+
+    motor = await make_motor()
+    await motor.press()
+    with pytest.raises(MotorBusy, match="release TURN first"):
+        await motor.set_spindle(False)
+    assert motor.running and motor.spindle_open
+    await motor.stop("test")

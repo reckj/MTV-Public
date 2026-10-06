@@ -76,8 +76,9 @@ async def command_rows(client, daemon):
 async def test_pin_right_wrong_and_malformed(client, daemon):
     code, body = await settings(client, daemon, "enter", pin="1234")
     assert code == 403 and body == {"error": "wrong PIN"}
-    code, body = await settings(client, daemon, "enter", pin=0)
-    assert code == 400
+    for bad in (0, "١٢٣٤", "12ab", "00 00", ""):  # not a string, non-ASCII digits, letters
+        code, body = await settings(client, daemon, "enter", pin=bad)
+        assert code == 400, bad
     code, body = await settings(client, daemon, "enter")
     assert code == 400
     body = await enter(client, daemon)
@@ -255,8 +256,10 @@ async def test_spindle_tool_and_the_motor_guard(client, daemon):
     await enter(client, daemon)
     code, body = await settings(client, daemon, "spindle", open=True)
     assert code == 200 and body["hardware"]["motor"]["spindle_open"] is True
+    assert body["motor"]["spindle_open"] is True  # the Live row and the tool read one value
     code, body = await settings(client, daemon, "spindle", open=False)
     assert body["hardware"]["motor"]["spindle_open"] is False
+    assert body["motor"]["spindle_open"] is False
     await command(client, daemon, command="motor_press")
     code, body = await settings(client, daemon, "spindle", open=False)
     assert code == 409 and "release TURN" in body["error"]
@@ -317,6 +320,44 @@ async def test_test_server_reports_reachability_and_never_unlocks(client, make_d
     assert code == 200 and body["test_server"]["ok"] is False
     assert body["test_server"]["error"] == "HTTP 500 from /api/vending/permission"
     assert {"tool": "test_server", "body": {}} in await command_rows(client, flaky)
+
+
+async def test_spindle_opened_by_the_tool_closes_on_exit(client, daemon):
+    await enter(client, daemon)
+    await settings(client, daemon, "spindle", open=True)
+    assert daemon.motor.active and daemon.hardware.status()["motor"]["spindle_open"] is True
+    code, body = await settings(client, daemon, "exit")
+    assert body["state"] == "idle"
+    assert body["hardware"]["motor"] == {"running": False, "spindle_open": False}
+    assert body["motor"]["spindle_open"] is False and not daemon.motor.active
+    # the entry hook locks the doors, then the transition's motor stop closes the spindle
+    assert daemon.hardware.calls[-3:] == ["lock_all_doors", "set_motor(False)",
+                                          "set_spindle(False)"]
+
+
+async def test_turn_held_across_exit_stops_the_motor(client, daemon):
+    await enter(client, daemon)
+    await command(client, daemon, command="motor_press")
+    await wait_until(lambda: daemon.motor.running, "running")
+    code, body = await settings(client, daemon, "exit")
+    assert body["state"] == "idle"
+    assert body["hardware"]["motor"] == {"running": False, "spindle_open": False}
+    assert body["motor"] == {"pressed": False, "running": False, "spindle_open": False}
+    rows = [r["details"] for r in await events(client, daemon) if r["kind"] == "motor"]
+    assert rows[0] == {"event": "stop", "reason": "leave_settings"}
+
+
+async def test_turn_held_across_the_timeout_stops_the_motor(client, make_daemon):
+    daemon = await make_daemon(settings_timeout_s=0.15)
+    await enter(client, daemon)
+    await command(client, daemon, command="motor_press")
+    await wait_until(lambda: daemon.motor.running, "running")
+    await wait_for_state(client, daemon, "idle")
+    await wait_until(lambda: not daemon.motor.active, "motor stopped by the transition")
+    body = await status(client, daemon)
+    assert body["hardware"]["motor"] == {"running": False, "spindle_open": False}
+    rows = [r["details"] for r in await events(client, daemon) if r["kind"] == "motor"]
+    assert rows[0] == {"event": "stop", "reason": "leave_settings"}
 
 
 # -- status additions ------------------------------------------------------------------

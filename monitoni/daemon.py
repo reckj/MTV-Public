@@ -54,6 +54,7 @@ class Daemon:
                              lambda: self.flow.state.value, on_change=self.changed.set)
         self.flow = Flow(config, hardware, purchase, self.outbox, self.events,
                          on_change=self._flow_changed, runtime=runtime)
+        self.flow.on_transition.append(self._after_transition)
         self.feedback = Feedback(self.flow, self.leds, self.audio)
         purchase.on_reachability = self._purchase_reachability
         self.leds.on_reachability = self._wled_reachability
@@ -66,7 +67,6 @@ class Daemon:
         self._identity_task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
         self._drain_task: asyncio.Task | None = None
-        self._motor_stop_task: asyncio.Task | None = None
         self._stops: list[Callable[[], Awaitable[None]]] = []  # what to undo, in start order
 
     async def start(self) -> None:
@@ -157,9 +157,13 @@ class Daemon:
 
     def _flow_changed(self) -> None:
         self.changed.set()
-        if self.flow.state not in (State.IDLE, State.SETTINGS) and self.motor.active:
-            self._motor_stop_task = asyncio.create_task(self.stop_motor("leave_idle"),
-                                                        name="motor-stop")
+
+    async def _after_transition(self, old: State | None, new: State) -> None:
+        """Every transition stops the motor and closes the spindle lock, explicitly, the way the
+        entry hook locks all doors: a TURN held across Exit or a spindle opened by the settings
+        tool ends here. Nothing to switch when the motor module says nothing is on."""
+        if old is not None:
+            await self.stop_motor(f"leave_{old.value}")
 
     async def stop_motor(self, reason: str) -> None:
         """Hard stop; a hardware error is logged and queued as a fault by the motor itself."""
