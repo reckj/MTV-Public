@@ -460,3 +460,24 @@ async def wait_until_reachable(client, daemon, value):
             return body
         assert asyncio.get_running_loop().time() < deadline, f"leds.reachable never {value}"
         await asyncio.sleep(0.01)
+
+
+async def test_a_lost_report_is_not_recovered_by_the_drainer(client, make_daemon, monkeypatch):
+    daemon = await make_daemon(dwell=0.02)
+
+    async def refuse(kind, level):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(daemon.outbox, "enqueue", refuse)
+    await command(client, daemon, command="select_level", level=1)
+    await command(client, daemon, command="simulate_payment")
+    await wait_for_state(client, daemon, "door_unlocked")
+    await command(client, daemon, command="simulate_door", open=True)
+    await command(client, daemon, command="simulate_door", open=False)
+    body = await wait_for_state(client, daemon, "out_of_order")
+    assert body["reason"] == "database" and body["leds"]["pattern"] == "fault"
+    await asyncio.sleep(0.2)  # hardware is healthy the whole time; the dwell would have passed
+    body = await status(client, daemon)
+    assert body["state"] == "out_of_order" and body["reason"] == "database"
+    code, body = await command(client, daemon, command="select_level", level=1)
+    assert code == 409

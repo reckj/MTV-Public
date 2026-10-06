@@ -90,7 +90,7 @@ body[data-reachable="false"] .net_hint { display: block; color: #f90; }
 #no_payment { display: none; margin: 16px 0; min-height: 280px; color: #f90; font-size: 24px; }
 body:not([data-reachable="true"]) #qr { display: none; }
 body:not([data-reachable="true"]) #no_payment { display: block; }
-body[data-reason="hardware"] #maintenance_message { display: none; }  /* that text is for maintenance only */
+body:not([data-reason="maintenance"]) #maintenance_message { display: none; }  /* that text is for maintenance only */
 
 #qr {
   display: block;

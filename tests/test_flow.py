@@ -5,6 +5,7 @@ import pytest
 
 from monitoni.eventlog import EventLog
 from monitoni.flow import (
+    REASON_DATABASE,
     REASON_HARDWARE,
     REASON_MAINTENANCE,
     TRANSITIONS,
@@ -589,3 +590,56 @@ async def test_a_bug_in_the_purchase_client_keeps_the_poll_going(make_flow, capl
         await wait_for(flow, State.DOOR_UNLOCKED)
     bugs = [r for r in caplog.records if "bug in the purchase client" in r.getMessage()]
     assert len(bugs) == 1 and bugs[0].exc_info is not None
+
+
+# -- a report the outbox cannot store ---------------------------------------------------
+
+async def test_a_lost_report_ends_the_vend_out_of_order(make_flow, monkeypatch, caplog):
+    flow = await make_flow()
+
+    async def refuse(kind, level):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(flow.outbox, "enqueue", refuse)
+    await to_door_unlocked(flow, level=3)
+    with caplog.at_level(logging.ERROR, logger="monitoni.flow"):
+        await flow.dispatch(Event.DOOR_OPENED)
+    assert flow.state is State.DOOR_OPENED  # the customer still gets the product
+    assert "outbox refused the complete report for level 3" in caplog.text
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await wait_for(flow, State.OUT_OF_ORDER)
+    assert flow.reason == REASON_DATABASE and flow.status()["reason"] == "database"
+    assert_all_locked(flow)
+    rows = await flow.events.recent(50)
+    lost = [r["details"] for r in reversed(rows)
+            if r["kind"] == "hardware" and r["details"]["event"] == "outbox_failed"]
+    assert [(d["kind"], d["error"]) for d in lost] == [("complete", "database is locked"),
+                                                       ("close", "database is locked")]
+    last = [r for r in rows if r["kind"] == "transition"][0]["details"]
+    assert (last["from"], last["to"], last["event"]) == ("completing", "out_of_order",
+                                                          "database_fault")
+    with pytest.raises(IllegalTransition):  # recovery is for hardware faults only
+        await flow.dispatch(Event.HARDWARE_OK)
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_DATABASE
+    assert flow.purchase.reports == []
+
+
+async def test_a_lost_report_does_not_outlive_out_of_order(make_flow, monkeypatch):
+    flow = await make_flow()
+    real_enqueue = flow.outbox.enqueue
+
+    async def refuse(kind, level):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(flow.outbox, "enqueue", refuse)
+    await to_door_unlocked(flow, level=2)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await flow.dispatch(Event.HARDWARE_FAULT, error="relay_levels: gone")  # before the close
+    assert flow.reason == REASON_HARDWARE
+    monkeypatch.setattr(flow.outbox, "enqueue", real_enqueue)
+    await flow.dispatch(Event.HARDWARE_OK)  # the hardware recovered; the lost report is history
+    await to_door_unlocked(flow, level=2)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await wait_for(flow, State.IDLE)
+    await wait_until(lambda: flow.purchase.reports == ["complete", "close"], "the next vend")

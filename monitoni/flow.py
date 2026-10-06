@@ -11,6 +11,9 @@ door_forced: alarm on until the door is closed, no timeout, nothing reported.
 The purchase server learns two things, both through the outbox (durable, retried
 there): `complete` the moment the door opens, `close` when it closes again. The
 level relocks relock_delay_s after the door opened (the pin catches on close).
+A report the outbox cannot even store is lost; the vend finishes (the door is what
+it is) and the machine then goes out_of_order with reason "database", which only a
+restart or the settings area clears.
 """
 
 import asyncio
@@ -52,11 +55,13 @@ class Event(StrEnum):
     RESET = "reset"
     HARDWARE_FAULT = "hardware_fault"
     HARDWARE_OK = "hardware_ok"
+    DATABASE_FAULT = "database_fault"  # a report could not be queued during this vend
 
 
 # why the machine is out_of_order
 REASON_MAINTENANCE = "maintenance"  # config flag, later the settings area; never clears itself
 REASON_HARDWARE = "hardware"  # automatic; clears itself once the hardware is healthy again
+REASON_DATABASE = "database"  # a complete/close report was lost; manual clearing or a restart
 
 TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.IDLE, Event.SELECT_LEVEL): State.CHECKING_PURCHASE,
@@ -71,6 +76,7 @@ TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.DOOR_OPENED, Event.TIMEOUT): State.DOOR_ALARM,
     (State.DOOR_ALARM, Event.DOOR_CLOSED): State.COMPLETING,
     (State.COMPLETING, Event.COMPLETE): State.IDLE,
+    (State.COMPLETING, Event.DATABASE_FAULT): State.OUT_OF_ORDER,
     # a door opened without a purchase: alarm until it is closed; out_of_order keeps rejecting it
     (State.IDLE, Event.DOOR_OPENED): State.DOOR_FORCED,
     (State.SLEEP, Event.DOOR_OPENED): State.DOOR_FORCED,
@@ -120,6 +126,7 @@ class Flow:
         self.purchase_id: str | None = None  # local id of one checking_purchase, for the log
 
         self._lock = asyncio.Lock()
+        self._report_lost = False  # the outbox refused a report in this vend
         self._timeout_task: asyncio.Task | None = None
         self._timeout_deadline: float | None = None
         self._poll_task: asyncio.Task | None = None
@@ -210,6 +217,8 @@ class Flow:
                 self.selected_level = item  # the server's word, whatever the customer picked
             if event is Event.HARDWARE_FAULT:
                 self.reason = REASON_HARDWARE
+            if event is Event.DATABASE_FAULT:
+                self.reason = REASON_DATABASE
 
             await self._transition(new_state, event, error)
         self.on_change()
@@ -272,12 +281,16 @@ class Flow:
         await self._enter(State.OUT_OF_ORDER)  # never raises
 
     async def _enqueue(self, kind: str, level: int | None) -> None:
-        """Queue a report for the outbox. A database failure is logged, never raised: the door is
-        what it is, and the event log on the same file is failing too."""
+        """Queue a report for the outbox. A database failure is never raised from here: the door
+        is what it is. It is logged, flagged, and `completing` then ends in out_of_order."""
         try:
             await self.outbox.enqueue(kind, level)
-        except Exception:
+        except Exception as exc:
             log.exception("outbox refused the %s report for level %s; it is lost", kind, level)
+            self._report_lost = True
+            await self.events.write("hardware", self.state.value, level=level,
+                                    details={"event": "outbox_failed", "kind": kind,
+                                             "error": str(exc)})
 
     async def _leave(self, state: State) -> None:
         if state in (State.DOOR_ALARM, State.DOOR_FORCED):
@@ -292,6 +305,7 @@ class Flow:
                           exc_info=not isinstance(exc, HardwareError))
             self.selected_level = None
             self.purchase_id = None
+            self._report_lost = False
         elif state is State.IDLE:
             await self.hardware.lock_all_doors()
             self.selected_level = None
@@ -405,5 +419,9 @@ class Flow:
                                 details={"event": "relocked"})
 
     async def _complete(self) -> None:
-        """completing has nothing left to do: `close` was queued on the way in. Finish."""
-        await self.dispatch(Event.COMPLETE)
+        """completing has nothing left to do: `close` was queued on the way in. Finish, unless a
+        report of this vend was lost: then the machine stops vending until someone looks."""
+        if self._report_lost:
+            await self.dispatch(Event.DATABASE_FAULT, error="a report could not be queued")
+        else:
+            await self.dispatch(Event.COMPLETE)
