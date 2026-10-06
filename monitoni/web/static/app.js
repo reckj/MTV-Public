@@ -28,6 +28,7 @@ function render(status) {
   }
   $("maintenance_message").textContent = status.maintenance_message;
   $("reason").textContent = status.reason ? `Reason: ${status.reason}` : "";
+  document.body.dataset.reason = status.reason ?? "";
   $("purchase_id").textContent = status.purchase_id ?? "–";
   document.body.dataset.motor = status.motor.running ? "running" : status.motor.pressed ? "pressed" : "";
 
