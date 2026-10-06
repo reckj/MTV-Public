@@ -8,6 +8,7 @@ from monitoni.flow import (
     REASON_HARDWARE,
     REASON_MAINTENANCE,
     TRANSITIONS,
+    VEND_STATES,
     Event,
     Flow,
     IllegalTransition,
@@ -15,8 +16,9 @@ from monitoni.flow import (
 )
 from monitoni.hardware.base import HardwareError
 from monitoni.hardware.mock import MockHardware
-from monitoni.purchase import MockPurchaseServer
-from tests.helpers import wait_until
+from monitoni.outbox import Outbox
+from monitoni.purchase import MockPurchaseServer, PurchaseServerError
+from tests.helpers import wait_until, wait_until_async
 
 ALLOWED = sorted(TRANSITIONS.items(), key=lambda kv: (kv[0][0].value, kv[0][1].value))
 REJECTED = [
@@ -40,7 +42,7 @@ REJECTED = [
 async def make_flow(make_config):
     started = []
 
-    async def _make(maintenance: bool = False, hardware_cls=MockHardware,
+    async def _make(maintenance: bool = False, hardware_cls=MockHardware, purchase=None,
                     **timings: float) -> Flow:
         config = make_config(**timings)
         config.system.maintenance_mode = maintenance
@@ -48,14 +50,21 @@ async def make_flow(make_config):
         await events.start()
         hardware = hardware_cls(config.vending.levels)
         await hardware.start()
-        flow = Flow(config, hardware, MockPurchaseServer(), events)
+        purchase = purchase or MockPurchaseServer()
+        holder: dict = {}
+        outbox = Outbox(config.database.path, purchase, events,
+                        config.purchase_server.outbox_backoff_s,
+                        lambda: holder["flow"].state.value)
+        await outbox.start()
+        flow = holder["flow"] = Flow(config, hardware, purchase, outbox, events)
         await flow.start()
-        started.append((flow, events))
+        started.append((flow, outbox, events))
         return flow
 
     yield _make
-    for flow, events in started:
+    for flow, outbox, events in started:
         await flow.stop()
+        await outbox.stop()
         await events.stop()
 
 
@@ -83,6 +92,15 @@ async def to_door_unlocked(flow: Flow, level: int = 3) -> None:
     await flow.dispatch(Event.SELECT_LEVEL, level=level)
     flow.purchase.simulate_payment(level)
     await wait_for(flow, State.DOOR_UNLOCKED)
+
+
+async def completion_rows(flow: Flow, count: int) -> list[dict]:
+    """Wait for `count` purchase_complete rows; return them oldest first."""
+    async def fetch():
+        rows = [r for r in reversed(await flow.events.recent(100))
+                if r["kind"] == "purchase_complete"]
+        return rows if len(rows) >= count else None
+    return await wait_until_async(fetch, f"{count} purchase_complete rows")
 
 
 # -- transition table ---------------------------------------------------------
@@ -216,9 +234,12 @@ async def test_happy_path(make_flow):
     transitions = [r["details"]["to"] for r in reversed(rows) if r["kind"] == "transition"]
     assert transitions == ["checking_purchase", "door_unlocked", "door_opened",
                            "completing", "idle"]
-    complete = [r for r in rows if r["kind"] == "purchase_complete"]
-    assert complete and complete[0]["purchase_id"] == server_id and complete[0]["details"]["ok"]
-    assert complete[0]["state"] == "completing"  # the completing hook saw the new state
+    await wait_until(lambda: flow.purchase.completions, "delivery by the outbox")
+    assert flow.purchase.completions == [{"purchase_id": server_id, "level": 5, "success": True}]
+    queued, delivered = await completion_rows(flow, 2)
+    assert queued["purchase_id"] == server_id and queued["state"] == "completing"
+    assert queued["details"] == {"delivered": False, "attempts": 0, "success": True}
+    assert delivered["details"] == {"delivered": True, "attempts": 1, "success": True}
 
 
 async def test_out_of_order_at_startup(make_flow):
@@ -383,3 +404,105 @@ async def test_lock_failure_entering_out_of_order_is_logged_not_raised(make_flow
     await flow.dispatch(Event.HARDWARE_OK)  # recovery attempt fails the same way, stays put
     assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
     assert flow.hardware.calls.count("lock_all_doors failed") == 4  # idle, ooo, idle, ooo
+
+
+# -- the purchase server: completions, abandoned vends, rejected and failing checks ----
+
+class FlakyPurchase(MockPurchaseServer):
+    """`check` raises PurchaseServerError the first `failures` times."""
+
+    def __init__(self, failures: int) -> None:
+        super().__init__()
+        self.failures = failures
+        self.errors = 0
+
+    async def check(self, level):
+        if self.failures > 0:
+            self.failures -= 1
+            self.errors += 1
+            raise PurchaseServerError("HTTP 500 from /api/purchase/check")
+        return await super().check(level)
+
+
+async def test_unlock_timeout_reports_success_false(make_flow):
+    flow = await make_flow(door_unlock_timeout_s=0.05)
+    await to_door_unlocked(flow, level=4)
+    purchase_id = flow.purchase_id
+    await wait_for(flow, State.IDLE)
+    await wait_until(lambda: flow.purchase.completions, "delivery")
+    assert flow.purchase.completions == [{"purchase_id": purchase_id, "level": 4, "success": False}]
+    queued = (await completion_rows(flow, 1))[0]
+    assert queued["details"] == {"delivered": False, "attempts": 0, "success": False,
+                                 "reason": "unlock_timeout"}
+    assert queued["state"] == "door_unlocked"  # queued while leaving, before idle is visible
+
+
+@pytest.mark.parametrize("state", sorted(VEND_STATES, key=lambda s: s.value),
+                         ids=[s.value for s in sorted(VEND_STATES, key=lambda s: s.value)])
+async def test_hardware_fault_during_a_vend_reports_success_false(make_flow, state):
+    flow = await make_flow()
+    await force(flow, state)
+    flow.purchase_id = "srv-9"
+    await flow.dispatch(Event.HARDWARE_FAULT, error="relay_levels: gone")
+    assert flow.state is State.OUT_OF_ORDER
+    await wait_until(lambda: flow.purchase.completions, "delivery")
+    assert flow.purchase.completions == [{"purchase_id": "srv-9", "level": 3, "success": False}]
+    assert (await completion_rows(flow, 1))[0]["details"]["reason"] == "hardware_fault"
+
+
+async def test_daemon_stop_during_a_vend_reports_success_false(make_flow):
+    flow = await make_flow()
+    await to_door_unlocked(flow, level=2)
+    purchase_id = flow.purchase_id
+    await flow.stop()
+    await flow.stop()  # idempotent: one completion, one stop row
+    await wait_until(lambda: flow.purchase.completions, "delivery")
+    assert flow.purchase.completions == [{"purchase_id": purchase_id, "level": 2, "success": False}]
+    assert (await completion_rows(flow, 1))[0]["details"]["reason"] == "daemon_stop"
+    rows = await flow.events.recent(100)
+    assert len([r for r in rows if r["kind"] == "daemon" and r["details"]["event"] == "stop"]) == 1
+
+
+async def test_unlock_failure_after_payment_reports_success_false(make_flow):
+    flow = await make_flow(hardware_cls=FailingUnlock)
+    await flow.dispatch(Event.SELECT_LEVEL, level=3)
+    await flow.dispatch(Event.PURCHASE_VALID, purchase_id="srv-1")
+    assert flow.state is State.OUT_OF_ORDER
+    await wait_until(lambda: flow.purchase.completions, "delivery")
+    assert flow.purchase.completions == [{"purchase_id": "srv-1", "level": 3, "success": False}]
+    assert (await completion_rows(flow, 1))[0]["details"]["reason"] == "hardware_fault"
+
+
+async def test_normal_vend_and_door_alarm_are_not_abandoned(make_flow):
+    flow = await make_flow(door_alarm_delay_s=0.05)
+    await to_door_unlocked(flow)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await wait_for(flow, State.DOOR_ALARM)  # the timeout here is not an abandonment
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await wait_for(flow, State.IDLE)
+    await wait_until(lambda: flow.purchase.completions, "delivery")
+    assert [c["success"] for c in flow.purchase.completions] == [True]
+
+
+async def test_rejected_purchase_returns_to_idle_with_last_result(make_flow):
+    flow = await make_flow()
+    flow.purchase.simulate_invalid(3)
+    await flow.dispatch(Event.SELECT_LEVEL, level=3)
+    await wait_for(flow, State.IDLE)
+    assert flow.last_result == "invalid" and flow.status()["last_result"] == "invalid"
+    check = [r for r in await flow.events.recent(20) if r["kind"] == "purchase_check"][0]
+    assert check["details"]["valid"] is False and check["level"] == 3
+    assert flow.purchase.completions == []
+    await flow.dispatch(Event.SELECT_LEVEL, level=2)  # the next transition clears it
+    assert flow.last_result is None
+
+
+async def test_purchase_server_errors_keep_the_poll_going(make_flow, caplog):
+    flow = await make_flow(purchase=FlakyPurchase(3))
+    flow.purchase.simulate_payment(2)
+    with caplog.at_level(logging.WARNING, logger="monitoni.flow"):
+        await flow.dispatch(Event.SELECT_LEVEL, level=2)
+        await wait_for(flow, State.DOOR_UNLOCKED)
+    assert flow.purchase.errors == 3
+    warnings = [r for r in caplog.records if "purchase check failed" in r.getMessage()]
+    assert len(warnings) == 1  # once per checking_purchase, not per poll

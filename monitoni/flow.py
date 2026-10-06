@@ -6,6 +6,9 @@ from exactly one place, every lock goes through the idle/out_of_order hook.
 A hardware error inside a hook ends in out_of_order with reason "hardware".
 A door opened while none should be open (idle, sleep, checking_purchase) is
 door_forced: alarm on until the door is closed, no timeout, no purchase completion.
+Completions go through the outbox (durable, retried there); a paid purchase that
+leaves door_unlocked/door_opened/door_alarm without completing is reported with
+success=false and the cause.
 """
 
 import asyncio
@@ -17,7 +20,8 @@ from enum import StrEnum
 from monitoni.config import Config
 from monitoni.eventlog import EventLog
 from monitoni.hardware.base import Hardware, HardwareError
-from monitoni.purchase import PurchaseServer
+from monitoni.outbox import Outbox
+from monitoni.purchase import Invalid, Paid, PurchaseServer, PurchaseServerError
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +86,11 @@ TRANSITIONS.update({(s, Event.RESET): State.IDLE for s in State if s is not Stat
 TRANSITIONS.update({(s, Event.HARDWARE_FAULT): State.OUT_OF_ORDER
                     for s in State if s is not State.OUT_OF_ORDER})
 
+# a paid purchase is being handed out; leaving these for idle/out_of_order reports success=false
+VEND_STATES = frozenset({State.DOOR_UNLOCKED, State.DOOR_OPENED, State.DOOR_ALARM})
+ABANDON_REASONS = {Event.TIMEOUT: "unlock_timeout", Event.HARDWARE_FAULT: "hardware_fault",
+                   Event.RESET: "reset"}
+
 # which config timing applies when a state is entered
 TIMEOUTS: dict[State, str] = {
     State.IDLE: "sleep_timeout_s",
@@ -100,10 +109,12 @@ class IllegalTransition(Exception):
 
 class Flow:
     def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer,
-                 events: EventLog, on_change: Callable[[], None] | None = None) -> None:
+                 outbox: Outbox, events: EventLog,
+                 on_change: Callable[[], None] | None = None) -> None:
         self.config = config
         self.hardware = hardware
         self.purchase = purchase
+        self.outbox = outbox
         self.events = events
         self.on_change = on_change or (lambda: None)
 
@@ -111,6 +122,8 @@ class Flow:
         self.reason: str | None = None  # while out_of_order: maintenance | hardware
         self.selected_level: int | None = None
         self.purchase_id: str | None = None
+        self.last_result: str | None = None  # "invalid" until the transition after a rejection
+        self._stopped = False
 
         self._lock = asyncio.Lock()
         self._timeout_task: asyncio.Task | None = None
@@ -139,7 +152,12 @@ class Flow:
 
     async def stop(self) -> None:
         async with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
             self._cancel_tasks()
+            if self.state in VEND_STATES:
+                await self._abandon("daemon_stop")
             await self.events.write("daemon", self.state.value, details={"event": "stop"})
 
     # -- status --------------------------------------------------------------
@@ -156,6 +174,7 @@ class Flow:
         return {
             "state": self.state.value,
             "reason": self.reason,
+            "last_result": self.last_result,
             "selected_level": self.selected_level,
             "purchase_id": self.purchase_id,
             "countdown_s": None if countdown is None else round(countdown, 1),
@@ -195,6 +214,8 @@ class Flow:
                 self.purchase_id = purchase_id
             if event is Event.HARDWARE_FAULT:
                 self.reason = REASON_HARDWARE
+            if event is Event.PURCHASE_INVALID:
+                self.last_result = "invalid"
 
             await self._transition(new_state, event, error)
         self.on_change()
@@ -214,10 +235,18 @@ class Flow:
         level, purchase_id = self.selected_level, self.purchase_id  # before the hooks change them
         log.info("%s --%s--> %s", old_state.value, event.value, new_state.value)
         self._cancel_tasks()
+        if event is not Event.PURCHASE_INVALID:
+            self.last_result = None
+        abandoned = False
+        if old_state in VEND_STATES and new_state in (State.IDLE, State.OUT_OF_ORDER):
+            await self._abandon(ABANDON_REASONS.get(event, event.value))
+            abandoned = True
         try:
             await self._leave(old_state)
             await self._enter(new_state)
         except Exception as exc:
+            if not abandoned and (old_state in VEND_STATES or new_state in VEND_STATES):
+                await self._abandon("hardware_fault")  # paid, and the door will not open now
             await self._fault(new_state, exc)
             self.state = State.OUT_OF_ORDER
             await self.events.write("transition", self.state.value, level=level,
@@ -242,6 +271,18 @@ class Flow:
         self.reason = REASON_HARDWARE
         self._cancel_tasks()
         await self._enter(State.OUT_OF_ORDER)  # never raises
+
+    async def _abandon(self, reason: str) -> None:
+        """A paid purchase that will not be handed out: tell the server, durably."""
+        if self.purchase_id is None or self.selected_level is None:
+            return
+        log.warning("purchase %s (level %d) not completed: %s",
+                    self.purchase_id, self.selected_level, reason)
+        try:
+            await self.outbox.enqueue(self.purchase_id, self.selected_level, success=False,
+                                      reason=reason)
+        except Exception:
+            log.exception("outbox refused the completion of %s; it is lost", self.purchase_id)
 
     async def _leave(self, state: State) -> None:
         if state in (State.DOOR_ALARM, State.DOOR_FORCED):
@@ -311,25 +352,37 @@ class Flow:
         await self.dispatch(Event.TIMEOUT)
 
     async def _poll_purchase(self, level: int) -> None:
-        machine_id = self.config.system.machine_id
+        """Ask the purchase server every poll_interval_s; the poll itself is the retry."""
         interval = self.config.purchase_server.poll_interval_s
+        warned = False
         # negative polls are not logged: that would be two rows a second for up to 120 s
         while True:
-            server_id = await self.purchase.check(machine_id, level)
-            if server_id is not None:
+            try:
+                result = await self.purchase.check(level)
+            except PurchaseServerError as exc:
+                if not warned:  # once per checking_purchase, not per poll
+                    log.warning("purchase check failed, polling continues: %s", exc)
+                    warned = True
+                await asyncio.sleep(interval)
+                continue
+            if isinstance(result, Paid):
                 await self.events.write("purchase_check", self.state.value, level=level,
-                                        purchase_id=server_id,
+                                        purchase_id=result.purchase_id,
                                         details={"valid": True, "local_id": self.purchase_id})
-                await self.dispatch(Event.PURCHASE_VALID, purchase_id=server_id)
+                await self.dispatch(Event.PURCHASE_VALID, purchase_id=result.purchase_id)
+                return
+            if isinstance(result, Invalid):
+                await self.events.write("purchase_check", self.state.value, level=level,
+                                        details={"valid": False, "local_id": self.purchase_id})
+                await self.dispatch(Event.PURCHASE_INVALID)
                 return
             await asyncio.sleep(interval)
 
     async def _complete(self) -> None:
+        """Queue the completion (the outbox delivers it) and finish; never waits on the network."""
         level, purchase_id = self.selected_level, self.purchase_id
-        ok = await self.purchase.complete(purchase_id, self.config.system.machine_id,
-                                          level, success=True)
-        if not ok:
-            log.error("purchase completion not acknowledged for %s", purchase_id)
-        await self.events.write("purchase_complete", self.state.value, level=level,
-                                purchase_id=purchase_id, details={"ok": ok})
+        try:
+            await self.outbox.enqueue(purchase_id, level, success=True)
+        except Exception:
+            log.exception("outbox refused the completion of %s; it is lost", purchase_id)
         await self.dispatch(Event.COMPLETE)
