@@ -1,7 +1,7 @@
 """Load config/default.yaml, overlay config/local.yaml, validate with pydantic."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -105,6 +105,8 @@ class PurchaseServerConfig(_Strict):
     complete_path: str
     poll_interval_s: float
     timeout_s: float
+    # waits between completion delivery attempts; the last value repeats
+    outbox_backoff_s: list[Annotated[float, Field(gt=0)]] = Field(min_length=1)
 
 
 class QrConfig(_Strict):

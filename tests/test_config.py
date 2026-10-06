@@ -100,6 +100,15 @@ def test_levels_must_be_positive(tmp_path):
         load_config(write_yaml(tmp_path / "default.yaml", data))
 
 
+def test_outbox_backoff_loads_and_is_checked(tmp_path):
+    assert load_config(DEFAULT_PATH).purchase_server.outbox_backoff_s == [1, 2, 5, 15, 60]
+    for bad in ([], [1, 0, 5]):
+        data = default_data()
+        data["purchase_server"]["outbox_backoff_s"] = bad
+        with pytest.raises(ConfigError, match=r"purchase_server\.outbox_backoff_s"):
+            load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
 def test_milestone_2_hardware_sections_load():
     hw = load_config(DEFAULT_PATH).hardware
     assert hw.door_locks.channels == list(range(1, 11))
