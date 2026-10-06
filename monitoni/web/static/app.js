@@ -19,6 +19,24 @@ async function send(body) {
   }
 }
 
+// Settings routes (Part A): POST /api/settings/<name>; the daemon decides, the page shows the answer.
+async function settings(name, body = {}) {
+  const resp = await fetch(`/api/settings/${name}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  $("settings_error").textContent = resp.ok ? "" : `${name}: ${resp.status} ${data.error ?? ""}`;
+  if (resp.ok && data.test_server) {
+    const t = data.test_server;
+    $("test_result").textContent = t.ok ? `OK · ${t.took_ms} ms` : `${t.error} · ${t.took_ms} ms`;
+  }
+  return data;
+}
+
+let lastState = null;
+
 function render(status) {
   document.body.dataset.state = status.state;
   $("state_name").textContent = status.state;
@@ -63,8 +81,28 @@ function render(status) {
     $("outbox").textContent = `${status.purchase_server.outbox_pending} pending`;
     $("purchase_server").textContent = JSON.stringify(status.purchase_server);
     $("hardware").textContent = JSON.stringify(status.hardware, null, 1);
+    const st = status.settings;
+    $("settings_status").textContent =
+      `${status.state} · out_of_order switch ${st.out_of_order ? "on" : "off"}` +
+      `${st.pin_is_default ? " · default PIN" : ""} · ${status.hostname} ${status.ip ?? "no ip"}` +
+      ` · v${status.app_version} · server ${status.purchase_server.base_url}`;
+    $("ooo").checked = st.out_of_order;
+    for (const [id, value] of [["brightness", status.leds.brightness], ["volume", status.audio.volume]]) {
+      if (document.activeElement !== $(id)) $(id).value = Math.round(value * 100);
+    }
+    const select = $("door_level");
+    if (select.childElementCount !== status.levels) {
+      select.replaceChildren(...Array.from({ length: status.levels }, (_, i) => new Option(`Level ${i + 1}`, i + 1)));
+    }
+    if (status.state !== lastState) loadSummary();
+    lastState = status.state;
     loadEvents();
   }
+}
+
+async function loadSummary() {
+  const s = await fetch("/api/events/summary").then((r) => r.json());
+  $("summary").textContent = `vends today ${s.vends_today} · total ${s.vends_total} · alarms ${s.alarms_today} · faults ${s.faults_today} · outbox ${s.outbox_pending}`;
 }
 
 async function loadEvents() {
@@ -105,12 +143,36 @@ for (const b of document.querySelectorAll("button[data-command]")) {
 $("sleep").onclick = () => send({ command: "touch" });
 
 // TURN: hold to run the motor. Pointer down presses, anything that ends the hold releases.
-const turn = $("turn");
-const releaseTurn = () => send({ command: "motor_release" });
-turn.onpointerdown = () => send({ command: "motor_press" });
-turn.onpointerup = releaseTurn;
-turn.onpointercancel = releaseTurn;
-turn.onpointerleave = releaseTurn;
-turn.oncontextmenu = (e) => e.preventDefault();
+for (const turn of [$("turn"), $("turn_settings")]) {
+  const releaseTurn = () => send({ command: "motor_release" });
+  turn.onpointerdown = () => send({ command: "motor_press" });
+  turn.onpointerup = releaseTurn;
+  turn.onpointercancel = releaseTurn;
+  turn.onpointerleave = releaseTurn;
+  turn.oncontextmenu = (e) => e.preventDefault();
+}
+
+// Settings block (Part A).
+for (const b of document.querySelectorAll("button[data-settings]")) {
+  b.onclick = () => {
+    const d = b.dataset;
+    const body = {};
+    if (d.settings === "enter") body.pin = $("pin").value;
+    if (d.settings === "door") Object.assign(body, { level: Number($("door_level").value), unlock: d.unlock === "true" });
+    if (d.settings === "spindle") body.open = d.open === "true";
+    if (d.settings === "leds") {
+      body.action = d.action;
+      if (d.action === "fill") body.rgb = [255, 255, 255];
+      if (d.action === "level") body.level = Number($("door_level").value);
+    }
+    if (d.settings === "audio") Object.assign(body, { action: d.action }, d.sound ? { sound: d.sound } : {});
+    settings(d.settings, body);
+  };
+}
+$("ooo").onchange = () => settings("out_of_order", { on: $("ooo").checked });
+$("brightness").onchange = () => settings("brightness", { value: Number($("brightness").value) / 100 });
+$("volume").onchange = () => settings("volume", { value: Number($("volume").value) / 100 });
+// every touch on a settings screen keeps the visit alive (the kiosk page will do the same)
+document.querySelector('section[data-state="settings"]').onpointerdown = () => send({ command: "touch" });
 
 connect();

@@ -12,8 +12,11 @@ from typing import TYPE_CHECKING
 import qrcode
 from aiohttp import web
 
+from monitoni.eventlog import FILTERS
 from monitoni.flow import Event, IllegalTransition, State
 from monitoni.hardware.base import HardwareError
+from monitoni.web.common import DAEMON, error
+from monitoni.web.settings import api_settings
 
 if TYPE_CHECKING:
     from monitoni.daemon import Daemon
@@ -24,7 +27,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 HEARTBEAT_S = 1.0
 MAX_EVENTS = 1000
 
-DAEMON = web.AppKey("daemon", object)
 WEBSOCKETS = web.AppKey("websockets", set)
 BROADCASTER = web.AppKey("broadcaster", asyncio.Task)
 
@@ -36,7 +38,9 @@ def create_app(daemon: "Daemon") -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/api/status", api_status)
     app.router.add_post("/api/command", api_command)
+    app.router.add_post("/api/settings/{name}", api_settings)
     app.router.add_get("/api/events", api_events)
+    app.router.add_get("/api/events/summary", api_events_summary)
     app.router.add_get(r"/api/qr/{level:\d+}.png", api_qr)
     app.router.add_get(r"/api/qr/{level:\d+}.json", api_qr_json)
     app.router.add_get("/ws", websocket)
@@ -45,10 +49,6 @@ def create_app(daemon: "Daemon") -> web.Application:
     app.on_shutdown.append(stop_broadcaster)
     app.on_shutdown.append(close_websockets)
     return app
-
-
-def error(status: int, message: str) -> web.Response:
-    return web.json_response({"error": message}, status=status)
 
 
 # -- pages and status ----------------------------------------------------------
@@ -62,12 +62,24 @@ async def api_status(request: web.Request) -> web.Response:
 
 
 async def api_events(request: web.Request) -> web.Response:
+    """?limit=50&before=<id>&filter=all|vends|hardware|network — newest first."""
     try:
-        limit = int(request.query.get("limit", "100"))
+        limit = int(request.query.get("limit", "50"))
+        before = request.query.get("before")
+        before = None if before is None else int(before)
     except ValueError:
-        return error(400, "limit must be an integer")
+        return error(400, "limit and before must be integers")
+    filter_ = request.query.get("filter", "all")
+    if filter_ not in FILTERS:
+        return error(400, f"filter must be one of {', '.join(FILTERS)}")
     limit = max(1, min(limit, MAX_EVENTS))
-    return web.json_response(await request.app[DAEMON].events.recent(limit))
+    return web.json_response(await request.app[DAEMON].events.query(limit, before, filter_))
+
+
+async def api_events_summary(request: web.Request) -> web.Response:
+    daemon = request.app[DAEMON]
+    return web.json_response({**await daemon.events.summary(),
+                              "outbox_pending": daemon.outbox.pending_count})
 
 
 # -- commands ------------------------------------------------------------------
@@ -93,8 +105,8 @@ async def api_command(request: web.Request) -> web.Response:
         elif command == "touch":
             await daemon.flow.dispatch(Event.TOUCH)
         elif command in ("motor_press", "motor_release"):
-            if daemon.flow.state is not State.IDLE:
-                return error(409, f"{command} is only allowed in state idle")
+            if daemon.flow.state not in (State.IDLE, State.SETTINGS):
+                return error(409, f"{command} is only allowed in idle or settings")
             if command == "motor_press":
                 await daemon.flow.dispatch(Event.TOUCH)  # holding TURN is activity: no sleep
                 await daemon.motor.press()

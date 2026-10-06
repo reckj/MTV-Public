@@ -4,11 +4,14 @@ the web server."""
 import asyncio
 import contextlib
 import logging
+import socket
 import time
 from collections.abc import Awaitable, Callable
+from urllib.parse import urlsplit
 
 from aiohttp import web
 
+from monitoni import __version__
 from monitoni.audio import Audio, MockAudio
 from monitoni.config import Config
 from monitoni.eventlog import EventLog
@@ -21,6 +24,7 @@ from monitoni.outbox import Outbox
 from monitoni.purchase import MockPurchaseServer, PurchaseServer
 from monitoni.runtime import Runtime
 from monitoni.web.server import create_app
+from monitoni.web.settings import DEFAULT_PIN
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +33,7 @@ class Daemon:
     recovery_check_s = 1.0  # how often the drainer asks whether a hardware fault has cleared
     recovery_dwell_s = 10.0  # the hardware must be healthy this long, without a break, first
     recovery_holdoff_s = 30.0  # pause after a recovery attempt that ended in out_of_order again
+    identity_refresh_s = 60.0  # how often the machine's own IP is looked up again
 
     def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer,
                  leds: Leds | None = None, audio: Audio | None = None,
@@ -56,6 +61,9 @@ class Daemon:
         self.motor = Motor(config.hardware.motor, hardware, self.events, hardware.events,
                            lambda: self.flow.state.value, on_change=self.changed.set)
         self._started_at: float | None = None
+        self.hostname = socket.gethostname()
+        self.ip: str | None = None  # the address of the interface with the default route
+        self._identity_task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
         self._drain_task: asyncio.Task | None = None
         self._motor_stop_task: asyncio.Task | None = None
@@ -64,6 +72,9 @@ class Daemon:
     async def start(self) -> None:
         """Start everything in order. If any step fails, undo the earlier ones and re-raise."""
         self._started_at = time.monotonic()
+        if self.config.settings.pin == DEFAULT_PIN:
+            log.warning("settings.pin is still the default %s: set it in config/local.yaml "
+                        "(docs/SETUP.md section 6)", DEFAULT_PIN)
         try:
             await self.events.start()
             self._stops.append(self.events.stop)
@@ -82,6 +93,9 @@ class Daemon:
             self._stops.append(self.flow.stop)
             self._drain_task = asyncio.create_task(self._drain_hardware_events(), name="hw-events")
             self._stops.append(self._stop_drain)
+            self.ip = default_route_ip()
+            self._identity_task = asyncio.create_task(self._refresh_identity(), name="identity")
+            self._stops.append(self._stop_identity)
             self._runner = web.AppRunner(create_app(self), access_log=None)
             self._stops.append(self._stop_web)
             await self._runner.setup()
@@ -121,6 +135,23 @@ class Daemon:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+
+    async def _stop_identity(self) -> None:
+        task, self._identity_task = self._identity_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _refresh_identity(self) -> None:
+        """The machine's IP can change (DHCP, cable); look it up on a timer, not per status."""
+        while True:
+            await asyncio.sleep(self.identity_refresh_s)
+            ip = default_route_ip()
+            if ip != self.ip:
+                log.info("machine IP %s -> %s", self.ip, ip)
+                self.ip = ip
+                self.changed.set()
 
     # -- motor stop rule -----------------------------------------------------
 
@@ -219,8 +250,12 @@ class Daemon:
         flow = self.flow.status()
         level = flow["selected_level"]
         hardware = self.hardware.status()
+        motor_cfg = self.config.hardware.motor
         return {
             "machine_id": self.config.system.machine_id,
+            "app_version": __version__,
+            "hostname": self.hostname,
+            "ip": self.ip,
             "hardware_mode": self.config.hardware.mode,
             "purchase_mode": "mock" if self.purchase_is_mock else "real",
             "uptime_s": round(uptime, 1),
@@ -234,5 +269,28 @@ class Daemon:
             "leds": self.leds.status(),
             "audio": self.audio.status(),
             "purchase_server": {**self.purchase.status(),
-                                "outbox_pending": self.outbox.pending_count},
+                                "outbox_pending": self.outbox.pending_count,
+                                "base_url": urlsplit(self.config.purchase_server.base_url).netloc},
+            "settings": {"pin_is_default": self.config.settings.pin == DEFAULT_PIN,
+                         "out_of_order": self.runtime.out_of_order},
+            # read-only installation values the settings screens show; no secrets
+            "config_view": {
+                "motor": {"spindle_pre_delay_ms": motor_cfg.spindle_pre_delay_ms,
+                          "spin_after_release_ms": motor_cfg.spin_after_release_ms,
+                          "spindle_post_delay_ms": motor_cfg.spindle_post_delay_ms,
+                          "max_run_s": motor_cfg.max_run_s},
+                "led": {"zones": self.config.led.zones},
+                "door_locks": {"channels": self.config.hardware.door_locks.channels},
+            },
         }
+
+
+def default_route_ip() -> str | None:
+    """The address of the interface the default route uses, or None without one. Connecting a
+    UDP socket sends nothing; it only makes the kernel pick the route."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.connect(("192.0.2.1", 9))  # TEST-NET-1: never routed anywhere real
+            return sock.getsockname()[0]
+        except OSError:
+            return None

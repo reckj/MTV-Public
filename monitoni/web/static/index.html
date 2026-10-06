@@ -61,6 +61,12 @@
       <p id="maintenance_message"></p>
       <p id="reason"></p>
     </section>
+
+    <section data-state="settings">
+      <h1>Settings</h1>
+      <p>Service area (dev page: the controls are in the block below).</p>
+      <button id="turn_settings" class="turn_small">TURN</button>
+    </section>
   </main>
 
   <aside id="dev" hidden>
@@ -77,6 +83,40 @@
     <p>Audio: <span id="audio"></span></p>
     <p>Outbox: <span id="outbox"></span> · Purchase server: <span id="purchase_server"></span></p>
     <pre id="hardware"></pre>
+    <fieldset id="settings_block">
+      <legend>Settings (Part A)</legend>
+      <div class="row">
+        <input id="pin" type="password" inputmode="numeric" placeholder="PIN" size="6" autocomplete="off">
+        <button data-settings="enter">Enter settings</button>
+        <button data-settings="exit">Exit</button>
+        <label><input type="checkbox" id="ooo"> Out of order</label>
+      </div>
+      <div class="row">
+        <select id="door_level"></select>
+        <button data-settings="door" data-unlock="true">Unlock</button>
+        <button data-settings="door" data-unlock="false">Lock</button>
+        <button data-settings="lock_all">Lock all</button>
+        <button data-settings="spindle" data-open="true">Spindle open</button>
+        <button data-settings="spindle" data-open="false">Spindle close</button>
+      </div>
+      <div class="row">
+        <button data-settings="leds" data-action="off">LEDs off</button>
+        <button data-settings="leds" data-action="fill">LEDs white</button>
+        <button data-settings="leds" data-action="level">Light level</button>
+        <button data-settings="audio" data-action="play" data-sound="success">Play success</button>
+        <button data-settings="audio" data-action="play" data-sound="alarm">Play alarm</button>
+        <button data-settings="audio" data-action="stop">Stop</button>
+      </div>
+      <div class="row">
+        <label>Brightness <input id="brightness" type="range" min="0" max="100"></label>
+        <label>Volume <input id="volume" type="range" min="0" max="100"></label>
+        <button data-settings="test_server">Test server</button>
+        <span id="test_result"></span>
+      </div>
+      <p>Settings: <span id="settings_status"></span></p>
+      <p>Summary: <span id="summary"></span></p>
+      <p id="settings_error"></p>
+    </fieldset>
     <ol id="events" reversed></ol>
   </aside>
 

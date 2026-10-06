@@ -14,9 +14,10 @@ from monitoni.web.server import qr_data
 from tests.conftest import http_purchase
 from tests.helpers import command, events, status, wait_for_state, wait_until
 
-STATUS_KEYS = {"machine_id", "hardware_mode", "purchase_mode", "uptime_s", "state", "reason",
-               "selected_level", "purchase_id", "levels", "doors", "countdown_s", "qr_url",
-               "maintenance_message", "hardware", "motor", "purchase_server", "leds", "audio"}
+STATUS_KEYS = {"machine_id", "app_version", "hostname", "ip", "hardware_mode", "purchase_mode",
+               "uptime_s", "state", "reason", "selected_level", "purchase_id", "levels", "doors",
+               "countdown_s", "qr_url", "maintenance_message", "hardware", "motor",
+               "purchase_server", "leds", "audio", "settings", "config_view"}
 
 
 class FailingMotor(MockHardware):
@@ -62,7 +63,7 @@ async def test_status_endpoint(client, daemon):
     assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
     assert body["purchase_mode"] == "mock"
     assert body["purchase_server"] == {"reachable": True, "last_ok": None, "last_error": None,
-                                       "outbox_pending": 0}
+                                       "outbox_pending": 0, "base_url": "monitoni.zhdk.ch"}
     assert body["levels"] == 10 and set(body["doors"]) == {str(n) for n in range(1, 11)}
     assert body["hardware"]["mode"] == "mock" and body["motor"]["running"] is False
     assert set(body["doors"].values()) == {"locked"}
@@ -202,6 +203,31 @@ def test_qr_data_matches_the_old_machines():
     assert qr_data("https://www.monitoni.zhdk.ch", 3) == "https://www.monitoni.zhdk.ch?level=3"
 
 
+async def test_events_filters_before_and_summary_over_http(client, daemon):
+    await command(client, daemon, command="select_level", level=2)
+    await command(client, daemon, command="simulate_payment")
+    await wait_for_state(client, daemon, "door_unlocked")
+    await command(client, daemon, command="simulate_door", open=True)
+    await command(client, daemon, command="simulate_door", open=False)
+    await wait_for_state(client, daemon, "idle")
+    await wait_until(lambda: daemon.purchase.reports == ["complete", "close"], "reports")
+    async with client.get(daemon.url + "/api/events?filter=vends&limit=3") as resp:
+        vends = await resp.json()
+    assert len(vends) == 3 and all(r["kind"] in ("transition", "outbox") for r in vends)
+    async with client.get(daemon.url + f"/api/events?filter=vends&before={vends[-1]['id']}") as r:
+        older = await r.json()
+    assert older and older[0]["id"] < vends[-1]["id"]
+    async with client.get(daemon.url + "/api/events?filter=network") as resp:
+        assert await resp.json() == []
+    async with client.get(daemon.url + "/api/events?filter=nope") as resp:
+        assert resp.status == 400
+    async with client.get(daemon.url + "/api/events?before=x") as resp:
+        assert resp.status == 400
+    async with client.get(daemon.url + "/api/events/summary") as resp:
+        assert await resp.json() == {"vends_today": 1, "vends_total": 1, "alarms_today": 0,
+                                     "faults_today": 0, "outbox_pending": 0}
+
+
 async def test_events_limit(client, daemon):
     async with client.get(daemon.url + "/api/events?limit=1") as resp:
         assert resp.status == 200 and len(await resp.json()) == 1
@@ -271,7 +297,7 @@ async def test_motor_commands_only_in_idle(client, daemon):
     await command(client, daemon, command="select_level", level=1)
     for cmd in ("motor_press", "motor_release"):
         code, body = await command(client, daemon, command=cmd)
-        assert code == 409 and "only allowed in state idle" in body["error"], cmd
+        assert code == 409 and "only allowed in idle or settings" in body["error"], cmd
     assert switches(daemon) == []
 
 

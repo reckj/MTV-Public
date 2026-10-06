@@ -47,7 +47,8 @@ body[data-state="door_opened"] section[data-state="door_opened"],
 body[data-state="door_alarm"] section[data-state="door_alarm"],
 body[data-state="door_forced"] section[data-state="door_forced"],
 body[data-state="completing"] section[data-state="completing"],
-body[data-state="out_of_order"] section[data-state="out_of_order"] { display: block; }
+body[data-state="out_of_order"] section[data-state="out_of_order"],
+body[data-state="settings"] section[data-state="settings"] { display: block; }
 
 h1 { font-size: 28px; margin: 0 0 16px; }
 
@@ -78,8 +79,10 @@ button {
   user-select: none;
   -webkit-user-select: none;
 }
-body[data-motor="pressed"] #turn { background: #7a2a1e; }
-body[data-motor="running"] #turn { background: #222; color: #e8503a; }
+.turn_small { display: block; margin-top: 16px; padding: 24px 16px; font-size: 24px; font-weight: bold;
+  background: #e8503a; touch-action: none; user-select: none; -webkit-user-select: none; }
+body[data-motor="pressed"] #turn, body[data-motor="pressed"] .turn_small { background: #7a2a1e; }
+body[data-motor="running"] #turn, body[data-motor="running"] .turn_small { background: #222; color: #e8503a; }
 
 #reason { color: #f90; }
 
@@ -120,6 +123,12 @@ body[data-state="door_forced"] main { background: #a00; }
 /* each simulate button only where that part is simulated */
 body:not([data-purchase="mock"]) button[data-command="simulate_payment"],
 body:not([data-hardware="mock"]) button[data-command="simulate_door"] { display: none; }
+#settings_block { margin-top: 12px; border: 1px solid #444; padding: 8px 12px; }
+#settings_block .row { margin-bottom: 8px; align-items: center; }
+#settings_block input[type="range"] { width: 90px; vertical-align: middle; }
+#settings_block input, #settings_block select { font: inherit; font-size: 14px; }
+#settings_error { color: #f90; min-height: 1em; margin: 4px 0 0; }
+#settings_block p { margin: 4px 0; }
 #hardware {
   margin: 8px 0 0;
   font-family: ui-monospace, monospace;
