@@ -1,10 +1,21 @@
-"""Load config/default.yaml, overlay config/local.yaml, validate with pydantic."""
+"""Load config/default.yaml, overlay config/local.yaml, validate with pydantic.
 
+`apply_runtime` reads data/runtime.json, where the settings area will store the few values a
+user may change at runtime (LED brightness, audio volume); they win over the YAML at start.
+"""
+
+import json
+import logging
 from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+log = logging.getLogger(__name__)
+
+Rgb = Annotated[list[Annotated[int, Field(ge=0, le=255)]], Field(min_length=3, max_length=3)]
+PixelRange = Annotated[list[Annotated[int, Field(ge=0)]], Field(min_length=2, max_length=2)]
 
 
 class ConfigError(Exception):
@@ -35,10 +46,15 @@ class RelayModuleConfig(_Strict):
 
 
 class WledConfig(_Strict):
+    """The Gledopto controller running WLED: ArtNet in over UDP, `/json/info` over HTTP."""
+
     ip_address: str
-    universe: int
-    fps: int
-    pixel_count: int
+    port: int = Field(ge=1, le=65535)  # ArtNet UDP port
+    universe: int = Field(ge=0)  # the first universe; 170 pixels each, consecutive after that
+    fps: int = Field(ge=1)
+    pixel_count: int = Field(ge=1)
+    health_poll_s: float = Field(gt=0)  # GET /json/info this often; ArtNet itself says nothing back
+    enabled: bool
 
 
 class DoorLocksConfig(_Strict):
@@ -68,7 +84,9 @@ class MotorConfig(_Strict):
 
 
 class AudioConfig(_Strict):
-    volume: float
+    volume: float = Field(ge=0, le=1)
+    enabled: bool
+    dir: Path  # holds success.wav, alarm.wav, error.wav
 
 
 class HardwareConfig(_Strict):
@@ -80,6 +98,24 @@ class HardwareConfig(_Strict):
     motor: MotorConfig
     wled: WledConfig
     audio: AudioConfig
+
+
+class LedColoursConfig(_Strict):
+    idle: Rgb
+    selected: Rgb
+    unlocked: Rgb
+    open: Rgb
+    alarm: Rgb
+    fault: Rgb
+
+
+class LedConfig(_Strict):
+    """What the strip shows. Zones are per machine (local.yaml): one [first, last] pixel range per
+    level, index = level - 1, checked against vending.levels and hardware.wled.pixel_count."""
+
+    brightness: float = Field(ge=0, le=1)  # scales every frame
+    zones: list[PixelRange]
+    colours: LedColoursConfig
 
 
 class WebConfig(_Strict):
@@ -126,6 +162,7 @@ class DatabaseConfig(_Strict):
 class Config(_Strict):
     system: SystemConfig
     hardware: HardwareConfig
+    led: LedConfig
     web: WebConfig
     vending: VendingConfig
     purchase_server: PurchaseServerConfig
@@ -176,7 +213,55 @@ def _cross_checks(config: Config) -> list[str]:
     if hw.door_sensor.di_index >= hw.relay_core.max_channels:
         errors.append(f"hardware.door_sensor.di_index: {hw.door_sensor.di_index} outside "
                       f"0..{hw.relay_core.max_channels - 1} (relay_core.max_channels)")
+    errors += _zone_checks(config.led.zones, config.vending.levels, hw.wled.pixel_count)
     return errors
+
+
+def _zone_checks(zones: list[list[int]], levels: int, pixel_count: int) -> list[str]:
+    """One [first, last] range per level, inside the strip, none overlapping."""
+    errors = []
+    if len(zones) != levels:
+        errors.append(f"led.zones: {len(zones)} zones listed for vending.levels = {levels}")
+    for i, (start, end) in enumerate(zones):
+        if start > end:
+            errors.append(f"led.zones.{i}: [{start}, {end}] ends before it starts")
+        elif end >= pixel_count:
+            errors.append(f"led.zones.{i}: [{start}, {end}] outside 0..{pixel_count - 1} "
+                          f"(hardware.wled.pixel_count)")
+    for i, (start, end) in enumerate(zones):
+        for j, (other_start, other_end) in enumerate(zones[:i]):
+            if start <= other_end and other_start <= end:
+                errors.append(f"led.zones.{i}: [{start}, {end}] overlaps led.zones.{j} "
+                              f"[{other_start}, {other_end}]")
+    return errors
+
+
+def apply_runtime(config: Config, path: Path) -> None:
+    """Overlay data/runtime.json (written by the settings area, later) on the loaded config.
+
+    Only `brightness` (led) and `volume` (audio) are read, each a number in 0..1. A missing file
+    is normal; a malformed file or value is logged and ignored, the YAML values stand.
+    """
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("top level must be an object")
+    except (OSError, ValueError) as exc:
+        log.warning("%s ignored: %s", path, exc)
+        return
+    for key, section, attr in (("brightness", config.led, "brightness"),
+                               ("volume", config.hardware.audio, "volume")):
+        if key not in data:
+            continue
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
+            log.warning("%s: %s must be a number in 0..1, not %r; using the config value",
+                        path, key, value)
+            continue
+        setattr(section, attr, float(value))
+        log.info("%s: %s = %s", path, key, value)
 
 
 def _read_yaml(path: Path) -> dict:

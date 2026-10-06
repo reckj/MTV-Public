@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 
@@ -147,3 +148,81 @@ def test_hardware_rules_name_the_key(tmp_path, section, key, value):
     data["hardware"][section][key] = value
     with pytest.raises(ConfigError, match=re.escape(f"hardware.{section}.{key}: ")):
         load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
+# -- Milestone 5: LEDs and audio -------------------------------------------------------
+
+def test_milestone_5_feedback_sections_load():
+    config = load_config(DEFAULT_PATH)
+    wled, audio, led = config.hardware.wled, config.hardware.audio, config.led
+    assert (wled.port, wled.universe, wled.fps, wled.health_poll_s, wled.enabled) == (
+        6454, 0, 30, 30.0, True)
+    assert audio.volume == 0.7 and audio.enabled and str(audio.dir) == "assets/sounds"
+    assert led.brightness == 0.6
+    assert led.zones == [[12 * i, 12 * i + 11] for i in range(10)]
+    assert led.colours.idle == [60, 40, 20] and led.colours.alarm == [239, 90, 106]
+
+
+ZONES = [[12 * i, 12 * i + 11] for i in range(10)]
+
+
+@pytest.mark.parametrize("zones,message", [
+    (ZONES[:9], "led.zones: 9 zones listed for vending.levels = 10"),
+    (ZONES[:9] + [[108, 300]],
+     "led.zones.9: [108, 300] outside 0..299 (hardware.wled.pixel_count)"),
+    (ZONES[:9] + [[119, 108]], "led.zones.9: [119, 108] ends before it starts"),
+    (ZONES[:9] + [[95, 119]], "led.zones.9: [95, 119] overlaps led.zones.7 [84, 95]"),
+    (ZONES[:9] + [[108, 119, 5]], "led.zones.9: List should have at most 2 items"),
+    (ZONES[:9] + [[-1, 11]], "led.zones.9.0: Input should be greater than or equal to 0"),
+], ids=["too-few", "past-the-end", "reversed", "overlap", "three-numbers", "negative"])
+def test_zone_rules_name_the_key(tmp_path, zones, message):
+    data = default_data()
+    data["led"]["zones"] = zones
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
+@pytest.mark.parametrize("path,value", [
+    ("led.brightness", 1.5),
+    ("led.colours.open", [255, 255]),
+    ("led.colours.alarm", [256, 0, 0]),
+    ("hardware.wled.fps", 0),
+    ("hardware.wled.health_poll_s", 0),
+    ("hardware.wled.port", 70000),
+    ("hardware.audio.volume", -0.1),
+], ids=["brightness", "two-channels", "channel-256", "fps-0", "poll-0", "port", "volume"])
+def test_feedback_values_are_checked(tmp_path, path, value):
+    data = default_data()
+    *parents, key = path.split(".")
+    section = data
+    for part in parents:
+        section = section[part]
+    section[key] = value
+    with pytest.raises(ConfigError, match=re.escape(path)):  # a list item adds its index
+        load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
+def test_runtime_overrides_brightness_and_volume(tmp_path, caplog):
+    from monitoni.config import apply_runtime
+
+    config = load_config(DEFAULT_PATH)
+    apply_runtime(config, tmp_path / "missing.json")  # normal on a fresh machine
+    assert config.led.brightness == 0.6 and config.hardware.audio.volume == 0.7
+
+    runtime = tmp_path / "runtime.json"
+    runtime.write_text('{"brightness": 0.25, "volume": 1}')
+    apply_runtime(config, runtime)
+    assert config.led.brightness == 0.25 and config.hardware.audio.volume == 1.0
+
+    runtime.write_text('{"brightness": 7, "volume": "loud", "other": 1}')
+    with caplog.at_level(logging.WARNING, logger="monitoni.config"):
+        apply_runtime(config, runtime)
+    assert config.led.brightness == 0.25 and config.hardware.audio.volume == 1.0  # unchanged
+    assert "brightness must be a number in 0..1, not 7" in caplog.text
+    assert "volume must be a number in 0..1, not 'loud'" in caplog.text
+
+    runtime.write_text("not json")
+    with caplog.at_level(logging.WARNING, logger="monitoni.config"):
+        apply_runtime(config, runtime)
+    assert config.led.brightness == 0.25
+    assert f"{runtime} ignored" in caplog.text

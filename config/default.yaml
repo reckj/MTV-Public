@@ -49,15 +49,49 @@ hardware:
     spindle_post_delay_ms: 100
     max_run_s: 10            # hard stop even if the button is never released
 
-  # Gledopto ESP32 running WLED, driven over ArtNet.
+  # Gledopto ESP32 running WLED, driven over ArtNet (UDP). WLED must be set to receive ArtNet
+  # in "Multi RGB" mode starting at `universe` (docs/SETUP.md). 170 pixels fit one universe;
+  # more take consecutive universes. Liveness is checked with GET http://ip_address/json/info.
   wled:
     ip_address: "192.168.1.102"
+    port: 6454
     universe: 0
     fps: 30
     pixel_count: 300
+    health_poll_s: 30
+    enabled: true              # false: no ArtNet is sent, the LED patterns are only in the status
 
+  # Sounds over HDMI (pygame.mixer). Three files in `dir`: success.wav, alarm.wav, error.wav.
   audio:
     volume: 0.7
+    enabled: true
+    dir: "assets/sounds"       # relative paths are resolved from the repo root
+
+# What the LED strip shows. Patterns and the state → pattern mapping live in monitoni/leds.py
+# and feedback.py; only the zones (per machine, local.yaml), colours and brightness are config.
+led:
+  brightness: 0.6              # 0..1, scales every frame; the settings area will change it at
+                               # runtime via data/runtime.json
+  # One [first, last] pixel range per level (index = level - 1), counted from the controller end
+  # starting at 0. The strip differs between machines: set this in local.yaml.
+  zones:
+    - [0, 11]
+    - [12, 23]
+    - [24, 35]
+    - [36, 47]
+    - [48, 59]
+    - [60, 71]
+    - [72, 83]
+    - [84, 95]
+    - [96, 107]
+    - [108, 119]
+  colours:                     # [r, g, b]; the strip speaks the screen's language
+    idle: [60, 40, 20]         # dim warm, all zones
+    selected: [233, 162, 59]   # the UI amber: the selected level while its QR is shown
+    unlocked: [233, 162, 59]   # breathing on the paid level
+    open: [239, 228, 210]      # cream while the door is open
+    alarm: [239, 90, 106]      # flashing red, all zones
+    fault: [120, 30, 30]       # dim red, all zones, out of order
 
 web:
   host: "127.0.0.1"

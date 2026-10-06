@@ -12,6 +12,7 @@ hardware:
     host: "192.168.1.101"
   wled:
     ip_address: "192.168.1.102"
+    pixel_count: 120         # how many pixels the strip has; WLED's LED count must not be smaller
 
   # Channel mapping: confirm against the wiring before the first start.
   door_locks:
@@ -22,6 +23,22 @@ hardware:
   motor:
     motor_channel: 1       # relay_core
     spindle_channel: 2     # relay_core
+
+# LED zones: one [first, last] pixel range per level, level 1 first, pixel 0 is the one next
+# to the controller. Every machine's strip is different, so count them on this machine
+# (docs/SETUP.md §6). Ranges must not overlap and must stay inside pixel_count.
+led:
+  zones:
+    - [0, 11]
+    - [12, 23]
+    - [24, 35]
+    - [36, 47]
+    - [48, 59]
+    - [60, 71]
+    - [72, 83]
+    - [84, 95]
+    - [96, 107]
+    - [108, 119]
 
 purchase_server:
   # The machine's token from its device page in the Monitoni admin (Cubera creates it when the
