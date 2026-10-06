@@ -47,6 +47,9 @@ for years: pinned versions, frozen OS image, no auto-updates.
   `settings.*` S0–S8, fonts). `assets/sounds/`: the three sounds.
 - `config/` — `default.yaml` (checked in), `local.yaml` (per machine). `tests/`
   — pytest. `docs/SETUP.md` — installation guide, grows with every step.
+- `deploy/` — the Pi: systemd units (the daemon; cage + Chromium kiosk on tty1
+  via `kiosk.sh`; the 04:00 kiosk reload timer), `install.sh` (idempotent,
+  mirrored in SETUP §5), `wheels.sh` (aarch64 wheels for an offline install).
 
 ## Conventions
 

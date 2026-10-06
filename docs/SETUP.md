@@ -45,17 +45,190 @@ _The rest of the list: to be written during integration._
 
 ## 2. Flash the OS with Raspberry Pi Imager
 
-Which OS image to choose, and the hostname, user, SSH and locale settings to
-enter in Imager before writing the card.
+_Written ahead of the Pi (Milestone 8 Part A); every step is verified on the
+machine in Part B._
 
-_To be written during integration._
+Done on the laptop, with a micro SD card in a card reader. The card is the
+**install card**: the machine runs from its SSD in the end (§3), but the Pi
+needs a system on a card first, because only a running system can make the
+SSD visible and copy itself onto it.
+
+1. Install Raspberry Pi Imager from https://www.raspberrypi.com/software/
+   (free, for Mac, Windows and Linux) and start it.
+2. **Choose Device**: Raspberry Pi 5. **Choose OS**: Raspberry Pi OS (other) →
+   **Raspberry Pi OS Lite (64-bit)**, the version without a desktop (the
+   kiosk brings its own display program, §9). **Choose Storage**: the card.
+   Next.
+3. "Would you like to apply OS customisation settings?" → **Edit Settings**:
+   - General: tick *Set hostname* and enter `vm001` (the machine id in lower
+     case; `vm002` for the next machine). Tick *Set username and password*:
+     username `monitoni`, a password of your choice; write it down, it is the
+     SSH login and the `sudo` password on the machine. *Configure wireless
+     LAN*: **unticked** (the machine is on Ethernet). Tick *Set locale
+     settings*: time zone `Europe/Zurich`; the keyboard layout does not
+     matter.
+   - Services: tick *Enable SSH*, choose *Use password authentication*.
+   - Options: as you like (telemetry can be off).
+   Save, then **Yes** (apply the settings), **Yes** (erase the card). Imager
+   writes and verifies the card; a few minutes.
+4. Two files on the card before the first boot. Imager ejects the card when it
+   is done: take it out, put it back in, it shows up as `bootfs`. Open each
+   file in a plain-text editor (on the Mac: TextEdit; if it shows formatting
+   buttons, Format → Make Plain Text first):
+   - `config.txt`: the last line is `[all]`; add under it
+     ```
+     dtparam=pciex1
+     ```
+     This switches on the PCIe connector the SSD hangs on; without it the SSD
+     is invisible to the Pi (§3).
+   - `cmdline.txt`: one long line. Add to its end, after a space, on the same
+     line:
+     ```
+     video=HDMI-A-1:400x1280M@60 consoleblank=0
+     ```
+     The first part sets the display to its native 400×1280 portrait mode on
+     the Pi's HDMI0 port (the HDMI socket next to the USB-C power socket);
+     nothing is rotated. The second keeps the text console from going black.
+   Save both files, eject the card (Finder: the eject symbol next to `bootfs`).
 
 ## 3. First boot and OS settings
 
-Wayland session, rotating the display to portrait, turning screen blanking
-off, enabling auto-login.
+_Written ahead of the Pi (Part A); verified in Part B._
 
-_To be written during integration._
+The display on HDMI0 and its USB cable (the touch panel) in the Pi, Ethernet
+in, the install card in, then power. The first boot takes a minute or two
+(the card is resized, the SSH keys are made, the Pi restarts once); the
+display shows white console text and ends at a `vm001 login:` prompt.
+Nothing to type there.
+
+**Log in over SSH** from the laptop, on the same network as the machine:
+
+```
+ssh monitoni@vm001.local
+```
+
+Answer `yes` to the fingerprint question, then type the password from §2
+(nothing is shown while typing). If `vm001.local` is not found, the laptop's
+network does not pass the name along: use the IP address instead (the
+router's device list shows `vm001`), or connect the laptop to the Pi with an
+Ethernet cable, which makes `vm001.local` work directly.
+
+**OS settings** with the Pi's configuration tool (arrow keys and Enter; Tab
+jumps to the buttons; Esc goes back):
+
+```
+sudo raspi-config
+```
+
+- 1 System Options → S5 Boot / Auto Login → **B1 Console**: a text console
+  without automatic login; the kiosk service (§9) takes the display over.
+- 1 System Options → S6 Network at Boot → **No**: the machine must start even
+  with the network cable out.
+- 5 Localisation Options: set by Imager already; L2 Timezone should read
+  Europe/Zurich.
+- Finish. If it asks to reboot, Yes; log in again afterwards.
+
+**Time.** The purchase server speaks HTTPS, which needs a roughly correct
+clock. Check:
+
+```
+timedatectl
+```
+
+Expected lines: `Time zone: Europe/Zurich`, `System clock synchronized: yes`,
+`NTP service: active`. The Pi sets its clock from the network (the Debian
+time servers, over NTP). If `synchronized: no` is still there after a few
+minutes, the network blocks NTP (UDP port 123): ask the network people for a
+time server and enter it as `NTP=<server>` in `/etc/systemd/timesyncd.conf`
+(`sudo nano /etc/systemd/timesyncd.conf`; Ctrl+O, Enter saves, Ctrl+X
+leaves), then `sudo systemctl restart systemd-timesyncd`.
+
+**The RTC battery.** The Pi 5 has a real-time clock; with the official RTC
+battery (a small rechargeable cell on the two-pin "BAT" connector between
+the USB-C socket and the HDMI sockets) the time survives a power cut even
+without a network, so the machine can vend right after a restart. Check the
+clock reads:
+
+```
+sudo hwclock -r
+```
+
+It prints the current time. The official battery is charged by the Pi only
+when told so: add to `/boot/firmware/config.txt`, under `[all]`, the line
+
+```
+dtparam=rtc_bbat_vchg=3000000
+```
+
+(`sudo nano /boot/firmware/config.txt`; it takes effect at the next boot).
+Only with the official rechargeable cell: a non-rechargeable battery must
+never be charged, so without that cell leave the line out.
+
+**The SSD.** Check that the Pi sees it:
+
+```
+lsblk
+```
+
+Expected: `mmcblk0` (the card, with `mmcblk0p1` and `mmcblk0p2`) **and**
+`nvme0n1` (the SSD). If `nvme0n1` is missing, the `dtparam=pciex1` line from
+§2 is not in `/boot/firmware/config.txt` (`cat /boot/firmware/config.txt`
+shows the file), or the SSD or its HAT is not seated; fix it, `sudo reboot`,
+check again. If it still does not appear, the machine runs from the card:
+skip the next step, everything below works the same.
+
+**Install onto the SSD.** Right after a fresh `sudo reboot` and login, with
+nothing else running, the whole card is copied to the SSD byte by byte, so
+the SSD ends up with the same system and the same settings:
+
+```
+sudo dd if=/dev/mmcblk0 of=/dev/nvme0n1 bs=4M status=progress conv=fsync
+```
+
+It prints the progress and takes a few minutes (roughly one minute per 5 GB
+of card). Then check the copied filesystem, because the card was in use
+during the copy:
+
+```
+sudo blockdev --rereadpt /dev/nvme0n1
+sudo e2fsck -f /dev/nvme0n1p2
+```
+
+`e2fsck` ends with a line counting files and blocks; if it fixes a small
+thing or two on the way, that is fine. Shut down:
+
+```
+sudo poweroff
+```
+
+Wait until the display is dark and the green LED has stopped, take the
+**install card out** and put it in a drawer: it must never be in the machine
+together with the SSD again (both carry the same partition ids, and the Pi
+could pick either). Power on: with no card the Pi boots from the SSD. Log
+in again and check:
+
+```
+findmnt /
+```
+
+The `SOURCE` column reads `/dev/nvme0n1p2`. The copied system still thinks
+it is as small as the card; give it the whole SSD:
+
+```
+sudo raspi-config
+```
+
+6 Advanced Options → A1 Expand Filesystem → Ok → Finish → Yes to reboot.
+After the reboot `df -h /` shows the SSD's size.
+
+Alternative, when the SSD can be put into a USB enclosure: write it from the
+laptop with Imager exactly as in §2 (same settings, same two file edits), fit
+it in the HAT and boot with no card at all. That gives a clean copy without
+the `dd` step.
+
+**Rollback.** The old system is still on the old card, untouched. Put that
+card in and power on: the Pi tries the card before the SSD and boots the old
+system. Take it out again to return to the new one.
 
 ## 4. Network
 
@@ -69,8 +242,8 @@ Facts so far (no network step has been performed on a Pi yet):
 - From the internet the daemon needs exactly one destination:
   `https://monitoni.zhdk.ch` (`purchase_server.base_url`), for the permission
   poll and the complete/close reports. Nothing else is contacted: no updates,
-  no telemetry. HTTPS verification needs a roughly correct clock; NTP and the
-  Pi 5's RTC battery belong to the Pi milestone (_to be written_).
+  no telemetry. HTTPS verification needs a roughly correct clock; time sync and the
+  RTC battery are set up in §3.
 - Without the purchase server the machine keeps running: customers can browse,
   the page says "Payment server not reachable" in idle and "Payment currently
   not possible — please wait" instead of a QR code, and the reports of vends
@@ -80,28 +253,96 @@ _Configuring the Pi's network: to be written during integration._
 
 ## 5. Install the application
 
-Copy or clone the repository, create the virtual environment, install the
-pinned requirements, and install offline from a wheel directory when the
-machine has no internet.
+_Written ahead of the Pi (Part A); verified in Part B, where the versions
+that were installed are filled in._
 
-Get the repository onto the machine (clone from GitHub or copy from a USB
-stick); exact commands will be written when this is first done on a Pi.
+Logged in over SSH as `monitoni` (§3). This section needs internet on the
+machine for `apt` and `git`; the Python packages can come from a USB stick
+instead (below).
 
-Steps performed so far (on a development laptop, not yet on a Pi), from inside
-the repository directory:
+**System packages.** cage shows one program full screen on the display,
+Chromium is that program (it shows the page), git fetches the application,
+python3-venv makes the application's own Python environment:
+
+```
+sudo apt update
+sudo apt install cage chromium git python3-venv
+```
+
+`Y` when asked. Write down what was installed; these versions stay frozen on
+the machine, `apt` is never run again except by hand:
+
+```
+apt list --installed 2>/dev/null | grep -E '^(cage|chromium|git|python3-venv)/'
+```
+
+Installed on vm001 in Part B: _to be filled in_.
+
+**The application** goes to `/opt/monitoni`, owned by the user `monitoni`:
+
+```
+sudo mkdir -p /opt/monitoni
+sudo chown monitoni:monitoni /opt/monitoni
+git clone https://github.com/reckj/MTV-Public.git /opt/monitoni
+cd /opt/monitoni
+```
+
+**The Python environment** inside it. Python 3.11 is the one Raspberry Pi OS
+Bookworm ships (`python3 --version` prints 3.11.x):
 
 ```
 python3 -m venv .venv
-.venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 ```
 
-The machine needs `requirements.txt` only. `requirements-dev.txt` (tests,
-lint) is for development; `make dev` installs both and then starts the daemon
-in mock mode. `python3` must be Python 3.11; Raspberry Pi OS Bookworm ships it.
+The second line downloads the pinned packages from the internet. **Without
+internet** on the machine the packages come from a USB stick: on the laptop,
+in the repository, run `deploy/wheels.sh` once (it needs the laptop's
+`.venv` from `make install` and internet; it fills `wheels/`, 24 files,
+about 25 MB), copy the `wheels` folder onto a USB stick, put the stick in
+the Pi, then:
 
-_Offline installation from a wheel directory: to be written during
-integration._
+```
+lsblk
+sudo mkdir -p /mnt/stick
+sudo mount /dev/sda1 /mnt/stick
+.venv/bin/pip install --no-index --find-links /mnt/stick/wheels -r requirements.txt
+sudo umount /mnt/stick
+```
+
+(`lsblk` lists the stick as `sda` with its partition `sda1`; use that name in
+the `mount` line.) Either way `pip` ends with `Successfully installed …`
+naming the 24 packages. Check that the application runs:
+
+```
+.venv/bin/python -m monitoni --help
+```
+
+It prints the options and exits.
+
+**The services.** One script puts the daemon and the kiosk in place as
+services and makes them start at boot; it is safe to run again later (after
+a change to a unit file, for example):
+
+```
+sudo /opt/monitoni/deploy/install.sh
+```
+
+It prints every step. What it does:
+
+1. Makes sure the user `monitoni` exists (Imager created it in §2) and is in
+   the groups `video`, `input`, `render` (cage: the display, the touch
+   panel, the graphics chip) and `audio` (the daemon's HDMI sound).
+2. Copies the four unit files from `deploy/` into `/etc/systemd/system/`
+   (`monitoni.service`, `monitoni-kiosk.service`,
+   `monitoni-kiosk-reload.service`, `monitoni-kiosk-reload.timer`) and tells
+   systemd to read them (`systemctl daemon-reload`).
+3. Enables the daemon, the kiosk and the nightly reload timer
+   (`systemctl enable …`), so they start at every boot.
+
+Nothing is started yet: §6 configures the machine first, §7 and §9 start the
+services. The new group memberships count for the services at once; an SSH
+session only gets them after logging out and in again.
 
 ## 6. Configure
 
@@ -296,13 +537,11 @@ sounds are off: <error>` means no audio device was found (on the Pi: check
 that HDMI audio is enabled and the display or an amplifier is connected). A
 dead strip or missing audio never stops the machine from vending.
 
-_HDMI audio on the Pi is not resolved yet._ On Raspberry Pi OS Bookworm sound
-goes through PipeWire, which runs per logged-in user, so whether the daemon
-finds the HDMI output depends on which user it runs as. The Pi milestone
-decides between running the daemon as the kiosk user (the one with the
-PipeWire session) and bypassing PipeWire with `SDL_AUDIODRIVER=alsa` plus
-`AUDIODEV` pinned to the HDMI device in the systemd unit. Nothing about this
-can be settled on the laptop.
+On the Pi the daemon runs as a service (§9) whose unit sets `SDL_AUDIODRIVER=alsa`
+and `AUDIODEV` to the HDMI output, so pygame goes straight to ALSA; Raspberry Pi
+OS Lite has no PipeWire. The device name is what `aplay -L` lists on the machine
+for the display's HDMI port (`vc4hdmi0` for HDMI0); the value in
+`deploy/monitoni.service` is a placeholder until Part B settles it.
 
 **The settings area.** Tap the small gear in the top right corner of the
 "Select a level" screen (or of the "Out of order" screen), type the PIN on the
@@ -339,11 +578,11 @@ list has no export: to take the data off the machine copy the SQLite file.
 From another computer on the same network, with the Pi's user and address:
 
 ```
-scp pi@192.168.1.50:/home/pi/monitoni/data/monitoni.db ./monitoni-$(date +%F).db
+scp monitoni@vm001.local:/opt/monitoni/data/monitoni.db ./monitoni-$(date +%F).db
 ```
 
-(replace the user, the address and the path with the machine's; the file can
-be opened with any SQLite tool, table `events`). Copying while the daemon runs
+(the machine's name from §2; the file can be opened with any SQLite tool,
+table `events`). Copying while the daemon runs
 is safe; the copy may miss the last second.
 
 _Real hardware start on a Pi: to be written during integration._
@@ -356,9 +595,111 @@ _To be written during integration._
 
 ## 9. Run as a service
 
-systemd units for the daemon and the kiosk browser, and the nightly UI reload.
+_Written ahead of the Pi (Part A); verified in Part B._
 
-_To be written during integration._
+§5's `install.sh` put three services in place; once §6 is done they are
+started by hand this once and come up by themselves at every boot from then
+on:
+
+```
+sudo systemctl start monitoni
+sudo systemctl start monitoni-kiosk
+sudo systemctl start monitoni-kiosk-reload.timer
+```
+
+- `monitoni` — the daemon, `/opt/monitoni/.venv/bin/python -m monitoni` as
+  the user `monitoni`, with `config/local.yaml` from §6. If it ever exits,
+  systemd starts it again after 5 seconds. Its sound goes straight to the
+  HDMI output (`deploy/monitoni.service` sets `SDL_AUDIODRIVER=alsa` and
+  `AUDIODEV`).
+- `monitoni-kiosk` — the display: cage with Chromium full screen on the Pi's
+  first console (tty1), started after the daemon. `deploy/kiosk.sh` waits
+  until the page answers at http://127.0.0.1:8080/, then starts the browser
+  with a profile that is made fresh under `/run` at every start: nothing the
+  browser saves survives, and the page loads nothing from the network. Also
+  restarted after 5 seconds if it exits.
+- `monitoni-kiosk-reload.timer` — restarts the kiosk every night at 04:00
+  local time. The daemon is not touched; the fresh page connects and shows
+  whatever state the machine is in.
+
+After `start monitoni-kiosk` the display switches from the console text to
+the "Select a shelf" screen within a few seconds.
+
+**Looking at them:**
+
+```
+systemctl status monitoni monitoni-kiosk
+systemctl list-timers monitoni-kiosk-reload.timer
+```
+
+`active (running)` is good; the timer line shows the next 04:00. The logs
+(the journal; Ctrl+C leaves `-f`):
+
+```
+journalctl -u monitoni -f
+journalctl -u monitoni -b
+journalctl -u monitoni-kiosk -b
+```
+
+The first follows the daemon live, the second shows everything since this
+boot, the third the same for the kiosk.
+
+**After a change to `config/local.yaml`:**
+
+```
+sudo systemctl restart monitoni
+```
+
+The display shows "Out of order" for a moment while the daemon is away and
+returns by itself. A mistake in the file shows up in
+`journalctl -u monitoni -n 30` as `invalid configuration:` followed by the
+key; the daemon keeps trying every 5 seconds until the file is fixed.
+
+**Stopping the kiosk for debugging.** The daemon keeps running; only the
+display program goes:
+
+```
+sudo systemctl stop monitoni-kiosk
+```
+
+The display goes black (no login prompt: tty1 is the kiosk's). For a login
+prompt on the display with a keyboard plugged in: `sudo systemctl start
+getty@tty1`. `sudo systemctl start monitoni-kiosk` brings the kiosk back and
+takes tty1 over again. To keep the kiosk off across a reboot:
+`sudo systemctl disable monitoni-kiosk` (and `enable` later).
+
+**The nightly reload by hand:**
+
+```
+sudo systemctl start monitoni-kiosk-reload.service
+```
+
+The display goes black for a few seconds and comes back on the current
+screen.
+
+**The page from a laptop.** The daemon listens on the Pi itself only
+(`web.host` is `127.0.0.1` on purpose: the page and its API are for the
+display in front of the machine, there is no login on them). To see the same
+page on a laptop, open an SSH tunnel and keep it open:
+
+```
+ssh -L 8080:127.0.0.1:8080 monitoni@vm001.local
+```
+
+then open http://127.0.0.1:8080/ in a browser on the laptop. It is a second
+window onto the same daemon: it shows what the display shows, and taps on
+either count. (If something on the laptop already uses port 8080, use
+`-L 8081:127.0.0.1:8080` and open http://127.0.0.1:8081/.) Changing
+`web.host` to reach the page without a tunnel is not supported.
+
+**Stopping everything** (for work on the machine):
+
+```
+sudo systemctl stop monitoni-kiosk monitoni
+```
+
+`stop monitoni` stops the motor and darkens the LED strip on the way out;
+`sudo systemctl start monitoni monitoni-kiosk` brings both back.
 
 ## 10. Troubleshooting
 
