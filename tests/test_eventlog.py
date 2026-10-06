@@ -50,7 +50,6 @@ async def seed(log: EventLog) -> None:
     """A vend, a forced door, a fault, a network blip and some noise, oldest first."""
     rows = [
         ("daemon", "idle", None, {"event": "start"}),
-        ("command", "idle", None, {"event": "touch"}),
         ("transition", "checking_purchase", 3,
          {"from": "idle", "to": "checking_purchase", "event": "select_level"}),
         ("purchase_check", "checking_purchase", 3, {"permitted": True, "item": 3, "selected": 3}),
@@ -97,7 +96,7 @@ async def test_filters_pick_the_right_rows(tmp_path):
         ("hardware", None), ("timeout", None), ("transition", "door_forced"), ("motor", None),
         ("rejected", None), ("transition", "out_of_order")]
     assert kinds["network"] == [("network", None)]
-    assert len(await log.query(100)) == 19
+    assert len(await log.query(100)) == 18
     with pytest.raises(KeyError):
         await log.query(10, filter="everything")
     await log.stop()
@@ -109,8 +108,8 @@ async def test_before_pages_backwards(tmp_path):
     await seed(log)
     page1 = await log.query(5)
     page2 = await log.query(5, before=page1[-1]["id"])
-    assert [r["id"] for r in page1] == list(range(19, 14, -1))
-    assert [r["id"] for r in page2] == list(range(14, 9, -1))
+    assert [r["id"] for r in page1] == list(range(18, 13, -1))
+    assert [r["id"] for r in page2] == list(range(13, 8, -1))
     vends1 = await log.query(3, filter="vends")
     vends2 = await log.query(3, before=vends1[-1]["id"], filter="vends")
     assert [r["details"].get("to") for r in vends1 + vends2] == [
