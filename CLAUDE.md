@@ -1,7 +1,10 @@
 # MoniToni
 
-Control daemon for a QR-code vending machine. Raspberry Pi 5, Raspberry Pi OS
-64-bit, Waveshare 7.9" HDMI touch display 400×1280 portrait. Runs unattended
+Control daemon for a QR-code vending machine: Raspberry Pi 5, Raspberry Pi OS
+64-bit, Waveshare 7.9" HDMI touch display 400×1280 portrait, two Waveshare
+Modbus-TCP relay modules over Ethernet/PoE (30-ch `relay_levels` for the door
+locks; 8-ch Module C `relay_core` for motor, spindle lock and the door sensor
+input), a Gledopto ESP32 running WLED (ArtNet), HDMI audio. Runs unattended
 for years: pinned versions, frozen OS image, no auto-updates.
 
 ## Stack
@@ -21,17 +24,15 @@ for years: pinned versions, frozen OS image, no auto-updates.
 
 ## Commands
 
-- `make dev` — create `.venv` if missing, install the pins, run `python -m
-  monitoni --mock --mock-purchase`; UI at http://127.0.0.1:8080/. `make test`
-  — pytest. `make lint` — ruff.
+- `make dev` — `.venv` if missing, the pins, then `python -m monitoni --mock
+  --mock-purchase`; UI at http://127.0.0.1:8080/. `make test` — pytest. `make lint` — ruff.
 - Dev commands, mock mode only (403 otherwise): `curl -X POST
   127.0.0.1:8080/api/command -H 'Content-Type: application/json' -d` with
   `'{"command":"simulate_payment"}'`, `'{"command":"simulate_door","open":true}'`
   or `'{"command":"simulate_server","reachable":false}'`.
-- Fakes for a laptop: `python -m tests.fake_waveshare --port N --coils 8` (one
-  per module, `--inputs-file` for the DI), `python -m tests.fake_purchase_server
-  --port N --token T` (`GET /pay?item=N`), `python -m tests.fake_artnet --port N
-  --zones 10x12` (reached with `--fake-artnet 127.0.0.1:N`, real sounds too).
+- Fakes: `python -m tests.fake_waveshare --port N --coils 8` (one per module,
+  `--inputs-file` for the DI), `tests.fake_purchase_server --port N --token T`,
+  `tests.fake_artnet --port N --zones 10x12` (reached with `--fake-artnet 127.0.0.1:N`).
 
 ## Folder layout
 
@@ -47,7 +48,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
   `settings.*` S0–S8, fonts). `assets/sounds/`: the three sounds.
 - `config/` — `default.yaml` (checked in), `local.yaml` (per machine). `tests/`
   — pytest. `docs/SETUP.md` — installation guide, grows with every step.
-- `deploy/` — the Pi: systemd units (the daemon; cage + Chromium kiosk on tty1
+- `deploy/` — the Pi: systemd units (the daemon, its options from
+  `/etc/default/monitoni` = `monitoni.default`; cage + Chromium kiosk on tty1
   via `kiosk.sh`; the 04:00 kiosk reload timer), `install.sh` (idempotent,
   mirrored in SETUP §5), `wheels.sh` (aarch64 wheels for an offline install).
 
@@ -91,12 +93,11 @@ for years: pinned versions, frozen OS image, no auto-updates.
   spindle closed are written explicitly, with read-back, on every (re)connect
   of a module (`RealHardware._connected`) and on every flow transition (entry
   hook, motor stop); a module is healthy only after that.
-- Error policy: a `HardwareError` in a hook or a settings tool, a lost module
-  connection or a failed door poll puts the flow into `out_of_order (hardware)`;
-  back to `idle` once the hardware has been healthy for `recovery_dwell_s` =
-  10 s. `maintenance` (the runtime switch) and `database` (a lost report) never
-  clear themselves. No command is retried; the motor's emergency OFF is the one
-  second write. Hardware stop switches nothing.
+- Error policy: a `HardwareError` in a hook or a settings tool, a lost module or
+  a failed door poll → `out_of_order (hardware)`, back to `idle` after
+  `recovery_dwell_s` = 10 s of healthy hardware. `maintenance` (the switch) and
+  `database` (a lost report) never clear themselves. No command is retried; the
+  motor's emergency OFF is the one second write. Hardware stop switches nothing.
 - Motor stop rule: the motor stops on release, after `max_run_s`, on every
   transition, when the last WebSocket closes and on daemon stop.
 - Purchase server (Monitoni): `GET /api/vending/permission` polled once a
@@ -110,26 +111,20 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - Feedback (LEDs, sound) never affects the flow: `feedback.py` is the one place
   mapping states to patterns and sounds, every call guarded, no retries. LED
   zones are per machine (`led.zones`).
-- Settings state: entered from `idle`/`out_of_order` with the PIN
-  (`settings.pin`, checked by the daemon, never in the browser); no sleep,
-  customer events rejected, door events status only; left by Exit or after
-  `settings_timeout_s` untouched, refused while the door is open, to
-  `out_of_order (maintenance)` if the switch is on, `(hardware)` if unhealthy,
-  else `idle`. Routes `POST /api/settings/<name>`.
+- Settings state: entered from `idle`/`out_of_order` with the PIN (`settings.pin`,
+  checked by the daemon, never in the browser); no sleep, customer events
+  rejected, door events status only. Left by Exit or after `settings_timeout_s`
+  untouched, refused while the door is open, to `out_of_order (maintenance)` if
+  the switch is on, `(hardware)` if unhealthy, else `idle`. Routes `POST /api/settings/<name>`.
 - Words: **shelf** on screen, `level` in code and API. Fonts are bundled under
   `static/fonts/` (OFL). stdlib `logging` to stdout only. English only.
 
-## Kept features
+## Scope
 
-- Customer screen (select level → QR → purchase verified → door unlocked →
-  door monitored → idle), sleep, out of order, door alarms, SQLite event log.
-  PIN-protected settings area: status, test tools, QR codes, events, three
-  runtime switches. Mock mode for a laptop.
-- Hardware: two Waveshare Modbus-TCP relay modules over Ethernet/PoE (30-ch
-  `relay_levels` for door locks; 8-ch Module C `relay_core` for motor, spindle
-  lock and the door sensor input), Gledopto ESP32 WLED via ArtNet, HDMI audio.
-
-## Dropped features
-
-Kivy / KivyMD; remote telemetry server and web dashboard; GPIO and RS485
-fallback paths; setup wizard (now `docs/SETUP.md`); any planning framework.
+Kept from the old system: the customer screen (select level → QR → purchase
+verified → door unlocked → door monitored → idle), sleep, out of order, door
+alarms, the SQLite event log, the PIN-protected settings area (status, test
+tools, QR codes, events, three runtime switches), mock mode for a laptop.
+Dropped: Kivy / KivyMD, the remote telemetry server and web dashboard, GPIO
+and RS485 fallback paths, the setup wizard (now `docs/SETUP.md`), any
+planning framework.
