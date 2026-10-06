@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stdout,
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per poll otherwise
 
     default_path = args.config_dir / "default.yaml"
     local_path = args.config_dir / "local.yaml"
