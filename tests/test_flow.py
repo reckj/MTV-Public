@@ -9,6 +9,7 @@ from monitoni.flow import (
     REASON_HARDWARE,
     REASON_MAINTENANCE,
     TRANSITIONS,
+    DoorOpen,
     Event,
     Flow,
     IllegalTransition,
@@ -36,6 +37,13 @@ REJECTED = [
     (State.OUT_OF_ORDER, Event.SELECT_LEVEL),
     (State.OUT_OF_ORDER, Event.DOOR_OPENED),
     (State.OUT_OF_ORDER, Event.RESET),
+    (State.SETTINGS, Event.SELECT_LEVEL),
+    (State.SETTINGS, Event.CANCEL),
+    (State.SETTINGS, Event.PURCHASE_VALID),
+    (State.SETTINGS, Event.ENTER_SETTINGS),
+    (State.SLEEP, Event.ENTER_SETTINGS),
+    (State.DOOR_UNLOCKED, Event.ENTER_SETTINGS),
+    (State.IDLE, Event.EXIT_SETTINGS),
 ]
 
 
@@ -644,3 +652,155 @@ async def test_a_lost_report_does_not_outlive_out_of_order(make_flow, monkeypatc
     await flow.dispatch(Event.DOOR_CLOSED)
     await wait_for(flow, State.IDLE)
     await wait_until(lambda: flow.purchase.reports == ["complete", "close"], "the next vend")
+
+
+# -- the settings area ----------------------------------------------------------------
+
+async def test_enter_from_idle_and_exit_to_idle(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    assert flow.state is State.SETTINGS and flow.reason is None
+    assert flow.countdown_s is not None  # the inactivity timer, not a sleep timer
+    with pytest.raises(IllegalTransition):
+        await flow.dispatch(Event.SELECT_LEVEL, level=3)
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.IDLE
+    assert_all_locked(flow)
+    transitions = [r["details"] for r in reversed(await flow.events.recent(10))
+                   if r["kind"] == "transition"]
+    assert [(t["event"], t["to"]) for t in transitions[-2:]] == [
+        ("enter_settings", "settings"), ("exit_settings", "idle")]
+
+
+async def test_enter_from_out_of_order_keeps_the_reason_until_the_exit_decides(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.HARDWARE_FAULT, error="relay_core: gone")
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    assert flow.state is State.SETTINGS and flow.reason == REASON_HARDWARE
+    flow.hardware.is_healthy = False
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    flow.hardware.is_healthy = True
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.IDLE and flow.reason is None
+
+
+async def test_exit_follows_the_runtime_switch_first(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    flow.runtime.out_of_order = True
+    flow.hardware.is_healthy = False  # the switch wins over the hardware
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_MAINTENANCE
+    assert_all_locked(flow)
+    with pytest.raises(IllegalTransition):
+        await flow.dispatch(Event.HARDWARE_OK)  # maintenance never clears itself
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    flow.runtime.out_of_order = False
+    flow.hardware.is_healthy = True
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.IDLE
+
+
+async def test_a_settings_visit_clears_the_database_reason(make_flow, monkeypatch):
+    flow = await make_flow()
+
+    async def refuse(kind, level):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(flow.outbox, "enqueue", refuse)
+    await to_door_unlocked(flow, level=3)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await wait_for(flow, State.OUT_OF_ORDER)
+    assert flow.reason == REASON_DATABASE
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.IDLE and flow.reason is None
+
+
+async def test_settings_time_out_and_a_touch_restarts_the_timer(make_flow):
+    flow = await make_flow(settings_timeout_s=0.1)
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    await asyncio.sleep(0.06)
+    await flow.dispatch(Event.TOUCH)
+    await asyncio.sleep(0.06)
+    assert flow.state is State.SETTINGS  # would have left at 0.1 without the touch
+    await wait_for(flow, State.IDLE)
+    rows = await flow.events.recent(10)
+    assert [r["kind"] for r in rows if r["kind"] in ("timeout", "command")] == ["timeout"]
+    # touches in settings write no command row (one per pointerdown would flood the log)
+
+
+async def test_door_events_in_settings_are_status_only(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    before = len(await flow.events.recent(100))
+    flow.hardware.simulate_door(True)
+    await flow.dispatch(Event.DOOR_OPENED)  # what the daemon's drainer does
+    assert flow.state is State.SETTINGS
+    assert "alarm(True)" not in flow.hardware.calls
+    flow.hardware.simulate_door(False)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    assert flow.state is State.SETTINGS
+    assert len(await flow.events.recent(100)) == before  # no transition, no rejected row
+
+
+async def test_exit_is_refused_while_the_door_is_open(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    flow.hardware.simulate_door(True)
+    await flow.dispatch(Event.DOOR_OPENED)
+    with pytest.raises(DoorOpen, match="close the door first"):
+        await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.SETTINGS
+    row = (await flow.events.recent(1))[0]
+    assert row["kind"] == "rejected"
+    assert row["details"] == {"event": "exit_settings", "reason": "door_open"}
+    flow.hardware.simulate_door(False)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.IDLE
+
+
+async def test_timeout_waits_for_the_door_to_close(make_flow):
+    flow = await make_flow(settings_timeout_s=0.05)
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    flow.hardware.simulate_door(True)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await asyncio.sleep(0.15)
+    assert flow.state is State.SETTINGS and flow.countdown_s is None  # fired, waiting
+    flow.hardware.simulate_door(False)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    assert flow.state is State.IDLE
+    assert_all_locked(flow)
+    last = [r for r in await flow.events.recent(10) if r["kind"] == "transition"][0]
+    assert last["details"]["event"] == "timeout"
+
+
+async def test_a_touch_after_the_timeout_fired_keeps_the_visit_going(make_flow):
+    flow = await make_flow(settings_timeout_s=0.05)
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    flow.hardware.simulate_door(True)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await asyncio.sleep(0.1)
+    await flow.dispatch(Event.TOUCH)  # the timer restarts, the pending exit is forgotten
+    flow.hardware.simulate_door(False)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    assert flow.state is State.SETTINGS and flow.countdown_s is not None
+    await wait_for(flow, State.IDLE)
+
+
+async def test_hardware_fault_in_settings_goes_out_of_order(make_flow):
+    flow = await make_flow()
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    await flow.dispatch(Event.HARDWARE_FAULT, error="relay_levels: connection closed")
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
+    assert_all_locked(flow)
+
+
+async def test_runtime_switch_at_start(make_flow):
+    flow = await make_flow(maintenance=True)
+    assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_MAINTENANCE
+    assert flow.runtime.out_of_order is True

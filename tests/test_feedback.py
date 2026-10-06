@@ -96,6 +96,17 @@ async def test_a_vend_walks_every_customer_row(make_flow):
     assert len(audio.calls) == 3  # success, alarm, stop: nothing else made a sound
 
 
+async def test_settings_show_idle_and_stay_silent(make_flow):
+    flow, leds, audio, _ = await make_flow()
+    await flow.dispatch(Event.HARDWARE_FAULT, error="x")
+    await flow.dispatch(Event.ENTER_SETTINGS)
+    assert led_calls(leds)[-1] == ("set_pattern", "idle", None)
+    assert audio_calls(audio) == [("play", "error", False)]  # nothing new for settings
+    leds.light_level(3, (1, 2, 3))  # a settings tool; the next transition restores the pattern
+    await flow.dispatch(Event.EXIT_SETTINGS)
+    assert flow.state is State.IDLE and led_calls(leds)[-1] == ("set_pattern", "idle", None)
+
+
 async def test_sleep_is_dark_and_silent(make_flow):
     flow, leds, audio, _ = await make_flow(sleep_timeout_s=0.05)
     await wait_for(flow, State.SLEEP)

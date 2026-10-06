@@ -126,7 +126,7 @@ class Daemon:
 
     def _flow_changed(self) -> None:
         self.changed.set()
-        if self.flow.state is not State.IDLE and self.motor.active:
+        if self.flow.state not in (State.IDLE, State.SETTINGS) and self.motor.active:
             self._motor_stop_task = asyncio.create_task(self.stop_motor("leave_idle"),
                                                         name="motor-stop")
 

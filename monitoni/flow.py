@@ -14,6 +14,11 @@ level relocks relock_delay_s after the door opened (the pin catches on close).
 A report the outbox cannot even store is lost; the vend finishes (the door is what
 it is) and the machine then goes out_of_order with reason "database", which only a
 restart or the settings area clears.
+`settings` is the PIN-protected service area: entered from idle and out_of_order, no
+sleep, customer events rejected, door events status only (someone is testing a lock),
+left by exit or after settings_timeout_s untouched; where it goes then is decided on
+the way out (runtime out_of_order switch, hardware health, else idle), and the exit
+waits while the door sensor reads open.
 """
 
 import asyncio
@@ -42,6 +47,7 @@ class State(StrEnum):
     DOOR_FORCED = "door_forced"
     COMPLETING = "completing"
     OUT_OF_ORDER = "out_of_order"
+    SETTINGS = "settings"
 
 
 class Event(StrEnum):
@@ -57,6 +63,8 @@ class Event(StrEnum):
     HARDWARE_FAULT = "hardware_fault"
     HARDWARE_OK = "hardware_ok"
     DATABASE_FAULT = "database_fault"  # a report could not be queued during this vend
+    ENTER_SETTINGS = "enter_settings"  # the PIN was right (checked by the daemon's API)
+    EXIT_SETTINGS = "exit_settings"
 
 
 # why the machine is out_of_order
@@ -85,6 +93,11 @@ TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.DOOR_FORCED, Event.DOOR_CLOSED): State.IDLE,
     # recovery from a hardware fault; dispatch() rejects it while the reason is maintenance
     (State.OUT_OF_ORDER, Event.HARDWARE_OK): State.IDLE,
+    # the settings area; on the way out dispatch() replaces idle by what _after_settings says
+    (State.IDLE, Event.ENTER_SETTINGS): State.SETTINGS,
+    (State.OUT_OF_ORDER, Event.ENTER_SETTINGS): State.SETTINGS,
+    (State.SETTINGS, Event.EXIT_SETTINGS): State.IDLE,
+    (State.SETTINGS, Event.TIMEOUT): State.IDLE,
 }
 # reset aborts whatever is going on; out_of_order stays until the settings area lifts it
 TRANSITIONS.update({(s, Event.RESET): State.IDLE for s in State if s is not State.OUT_OF_ORDER})
@@ -98,6 +111,7 @@ TIMEOUTS: dict[State, str] = {
     State.CHECKING_PURCHASE: "purchase_timeout_s",
     State.DOOR_UNLOCKED: "door_unlock_timeout_s",
     State.DOOR_OPENED: "door_alarm_delay_s",
+    State.SETTINGS: "settings_timeout_s",
 }
 
 
@@ -106,6 +120,13 @@ class IllegalTransition(Exception):
         super().__init__(f"{event.value} is not allowed in state {state.value}")
         self.state = state
         self.event = event
+
+
+class DoorOpen(Exception):
+    """exit_settings while the door sensor reads open."""
+
+    def __init__(self) -> None:
+        super().__init__("close the door first")
 
 
 class Flow:
@@ -130,6 +151,7 @@ class Flow:
 
         self._lock = asyncio.Lock()
         self._report_lost = False  # the outbox refused a report in this vend
+        self._exit_pending = False  # settings timed out while the door was open
         self._timeout_task: asyncio.Task | None = None
         self._timeout_deadline: float | None = None
         self._poll_task: asyncio.Task | None = None
@@ -191,15 +213,22 @@ class Flow:
         """
         async with self._lock:
             if event is Event.TOUCH and self.state is not State.SLEEP:
-                # accepted everywhere; only idle has a sleep timer to reset
-                if self.state is State.IDLE:
+                # accepted everywhere; idle and settings have an inactivity timer to restart
+                if self.state in (State.IDLE, State.SETTINGS):
+                    self._exit_pending = False
                     self._start_timeout(self.state)
-                await self.events.write("command", self.state.value, details={"event": "touch"})
+                if self.state is not State.SETTINGS:  # there, every pointerdown is a touch
+                    await self.events.write("command", self.state.value,
+                                            details={"event": "touch"})
                 return
             if event is Event.HARDWARE_FAULT and self.state is State.OUT_OF_ORDER:
                 # already there; a maintenance reason is kept
                 log.warning("hardware fault while out_of_order (%s): %s", self.reason, error)
                 return
+            if self.state is State.SETTINGS:
+                event = await self._settings_event(event)
+                if event is None:
+                    return
 
             new_state = TRANSITIONS.get((self.state, event))
             if new_state is None or (event is Event.HARDWARE_OK
@@ -222,9 +251,45 @@ class Flow:
                 self.reason = REASON_HARDWARE
             if event is Event.DATABASE_FAULT:
                 self.reason = REASON_DATABASE
+            if self.state is State.SETTINGS and event in (Event.EXIT_SETTINGS, Event.TIMEOUT):
+                new_state, self.reason = self._after_settings()
 
             await self._transition(new_state, event, error)
         self.on_change()
+
+    # -- the settings area -----------------------------------------------------
+
+    async def _settings_event(self, event: Event) -> Event | None:
+        """Rules that only hold in settings. Returns the event to apply, or None for "nothing"."""
+        if event in (Event.DOOR_OPENED, Event.DOOR_CLOSED):
+            # status only: someone is testing a lock; the daemon already wrote the hardware row
+            opened = event is Event.DOOR_OPENED
+            log.info("door %s while in settings", "opened" if opened else "closed")
+            if not opened and self._exit_pending:
+                log.info("settings timed out earlier; the door is closed now, leaving")
+                return Event.TIMEOUT
+            return None
+        if event in (Event.EXIT_SETTINGS, Event.TIMEOUT) and self._door_open():
+            if event is Event.EXIT_SETTINGS:
+                await self.events.write("rejected", self.state.value,
+                                        details={"event": event.value, "reason": "door_open"})
+                raise DoorOpen()
+            self._exit_pending = True
+            log.info("settings timed out while the door is open: leaving once it is closed")
+            return None
+        return event
+
+    def _after_settings(self) -> tuple[State, str | None]:
+        """Where the machine goes when settings are left: the runtime switch first, then the
+        hardware, else idle. A `database` reason does not survive a visit: someone looked."""
+        if self.runtime.out_of_order:
+            return State.OUT_OF_ORDER, REASON_MAINTENANCE
+        if not self.hardware.healthy():
+            return State.OUT_OF_ORDER, REASON_HARDWARE
+        return State.IDLE, None
+
+    def _door_open(self) -> bool:
+        return self.hardware.status().get("door_open") is True
 
     # -- transition machinery ------------------------------------------------
 
@@ -329,6 +394,8 @@ class Flow:
             await self.hardware.alarm(True)
         elif state is State.COMPLETING:
             self._complete_task = asyncio.create_task(self._complete(), name="purchase-complete")
+        elif state is State.SETTINGS:
+            self._exit_pending = False
         self._start_timeout(state)
 
     def _start_timeout(self, state: State) -> None:

@@ -12,6 +12,7 @@ and swallowed, the flow never sees it. No retries. The mapping (notes/feedback.m
   door_alarm, door_forced    alarm, all zones                alarm, looped while in the state
   completing                 thanks, that level (fades to idle)
   out_of_order               fault                           error once, except for maintenance
+  settings                   idle (the LED tools there override it until the next transition)
 """
 
 import logging
@@ -33,6 +34,7 @@ LED_PATTERNS: dict[State, str] = {
     State.DOOR_FORCED: "alarm",
     State.COMPLETING: "thanks",
     State.OUT_OF_ORDER: "fault",
+    State.SETTINGS: "idle",
 }
 LEVEL_PATTERNS = frozenset({"selected", "unlocked", "open", "thanks"})  # concern one level
 
