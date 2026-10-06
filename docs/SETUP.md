@@ -112,8 +112,12 @@ Keys an installer must set in `config/local.yaml` so far (copy
 `config/local.yaml.example` as a start; every key not listed keeps its value
 from `config/default.yaml`):
 
-- `system.machine_id` — a label for the log and the status page; the server
-  identifies the machine by its token, not by this.
+- `system.name` — what customers see in the top bar of the screen. The part
+  before the first ` · ` is the big wordmark, the rest the small line under
+  it: `name: "Monitoni · ZHdK · Toni-Areal"` shows "MONITONI" over
+  "ZHDK · TONI-AREAL". The default is `"Monitoni"` alone.
+- `system.machine_id` — a label for the log and the settings screens; the
+  server identifies the machine by its token, not by this.
 - `hardware.relay_core.host`, `hardware.relay_levels.host`,
   `hardware.wled.ip_address` — the modules' IP addresses.
 - `hardware.door_locks.channels` — the `relay_levels` channel for level 1,
@@ -149,8 +153,8 @@ from `config/default.yaml`):
   daemon refuses to start otherwise and names the bad entry (`led.zones.3`
   is the fourth level). The default is ten blocks of twelve pixels.
 - `led.brightness` (0..1, default 0.6) and `hardware.audio.volume` (0..1,
-  default 0.7). Once the settings area exists these two are changed on the
-  machine and stored in `data/runtime.json`, which then wins over the YAML.
+  default 0.7). Both are changed on the machine in the settings area and then
+  stored in `data/runtime.json`, which wins over the YAML.
 - `hardware.wled.enabled` / `hardware.audio.enabled` — set to `false` on a
   machine without a strip or without a speaker; the daemon then uses the
   built-in stand-ins and shows the patterns only in the status.
@@ -160,11 +164,12 @@ its own static IP before the daemon can talk to both; `default.yaml` assumes
 192.168.1.100 for `relay_core` and 192.168.1.101 for `relay_levels`. How to
 change a module's address will be written down when it has been done.
 
-Older `local.yaml` files: the key `system.maintenance_mode` no longer exists
-(the Out of order switch in the settings area replaced it) and neither does
-`qr.dir`. The daemon refuses to start with an unknown key and names it, for
-example `system.maintenance_mode: Extra inputs are not permitted`; delete that
-line from `local.yaml`.
+Older `local.yaml` files: the keys `system.maintenance_mode` (the Out of order
+switch in the settings area replaced it), `system.maintenance_message` (the
+"Out of order" screen has fixed words now) and `qr.dir` no longer exist. The
+daemon refuses to start with an unknown key and names it, for example
+`system.maintenance_message: Extra inputs are not permitted`; delete that line
+from `local.yaml`.
 
 `data/runtime.json`, next to the database, is written by the daemon and holds
 the three switches a user changes on the machine: `out_of_order` (true keeps
@@ -190,45 +195,90 @@ cd monitoni
 `--mock` uses simulated relay modules, `--mock-purchase` simulates payments;
 without the second flag the daemon talks to `purchase_server.base_url`.
 
-Then open http://127.0.0.1:8080/ in a browser. The page shows the current
-state in the header with a green "connected" badge, level buttons 1 to 10 in
-`idle`, the QR code and a cancel button after selecting a level, the door
-instructions while a door is open, a red screen when the door alarm is on or
-a door was opened without a purchase, and a dark screen in sleep (tap to
-wake). A dev panel at the bottom offers "Simulate payment" (with the mock
-purchase server) and, with mock hardware, "Door open" and "Door close"; it
-shows the hardware status object and lists the last 20 events. The same three
-buttons sit on the settings home screen as a "Simulation" card in mock mode.
-Walk the flow: select a level, simulate payment, door open, door close, back
-to idle. Every step is written to `data/monitoni.db`. Stop the daemon with
-Ctrl+C; it logs "shutdown requested" and exits.
+Then open http://127.0.0.1:8080/ in a browser: this is the page the kiosk
+shows ("What the customer sees" below). In mock mode the payment, the door
+sensor and the purchase server are simulated from a second terminal:
 
-In `idle` the page also shows a big TURN button: hold it to run the motor
-(spindle lock opens first); it stops on release and after `max_run_s`
-regardless.
+```
+curl -X POST 127.0.0.1:8080/api/command -H 'Content-Type: application/json' -d '{"command":"simulate_payment"}'
+curl -X POST 127.0.0.1:8080/api/command -H 'Content-Type: application/json' -d '{"command":"simulate_door","open":true}'
+curl -X POST 127.0.0.1:8080/api/command -H 'Content-Type: application/json' -d '{"command":"simulate_server","reachable":false}'
+```
+
+The first pays for the shelf that was selected on the screen, the second
+opens (`true`) or closes (`false`) the door sensor, the third makes the
+purchase server unreachable (`false`) or reachable again (`true`). The
+settings home screen has "Open" and "Close" for the door as a "Simulation"
+card in mock mode. Walk the flow: select a shelf, simulate the payment, open
+the door, close it, back to the shelves. Every step is written to
+`data/monitoni.db`. Stop the daemon with Ctrl+C; it logs "shutdown requested"
+and exits.
+
+**What the customer sees.** The page is the whole kiosk: one screen per
+state of the machine, nothing is decided in the browser. In the order of a
+purchase:
+
+- *Select a shelf*: the machine's name (`system.name`) in the top bar, the
+  TURN button ("HOLD TO ROTATE": hold it to turn the carousel, the spindle lock
+  opens first, it stops on release and after `max_run_s` regardless), the
+  caption "Select a shelf · scan to pay" and ten tiles, shelf 1 ("top") to 10
+  ("bottom"). The small gear in the top right corner opens the settings. While
+  the purchase server cannot be reached, "Payment currently not possible"
+  stands in amber at the bottom; the shelves can still be tapped.
+- *Sleep*: after 60 s without a touch the screen goes black with a dim "Tap to
+  wake"; any touch brings the shelves back.
+- *Scan to pay*: the chosen shelf number, the QR code on a cream plate ("Scan
+  with your phone" — "Pay in the app. The door unlocks by itself, nothing to
+  press here."), a countdown from 2:00 and Cancel. While the purchase server
+  is unreachable the plate reads "Please wait a moment. The payment server is
+  not reachable." instead of the code; the countdown keeps running and the
+  code appears as soon as the server answers again.
+- *Door unlocked*: "Shelf N is unlocked — Open the door and take your
+  product." with a countdown from 0:30; the drawing of the machine below shows
+  that shelf's door in amber.
+- *Take your product*: "Shelf N — Take your product — Then close the door.";
+  the drawing shows the door open.
+- *Close the door*: after 10 s with the door open the screen turns dark red:
+  "Please close the door — The door has been open for a while."
+- *Door forced*: the same red screen with "Door opened without a purchase —
+  Close it. This event is recorded." when a door opens without a payment; it
+  goes away when the door is closed.
+- *Thank you*: "Shelf N — Thank you" for the moment it takes the daemon to
+  report the vend, then back to the shelves.
+- *Out of order*: "Out of order" with the gear in the corner. The line
+  "Technical problem — please try again later." is added for a hardware fault
+  only; while the switch in the settings is on, or after a lost report, the
+  screen shows the two words alone.
+
+While the daemon is not running, or the page has lost its connection to it,
+the screen shows "Out of order" alone, without the gear; the page reconnects
+by itself (after 1, 2, 5 and then every 10 seconds) and shows the current
+screen as soon as the daemon is back. Reloading the page at any point shows
+the current state again, countdown included.
 
 Starting without `--mock` while `hardware.mode` is `real` refuses to run if
 `config/local.yaml` is missing. With a `local.yaml` the daemon starts even if
-a module is unreachable: the page shows "Out of order" with "Reason:
-hardware", and `/api/status` lists both modules under `hardware` with
-`connected` and `last_error`. The daemon reconnects every 2, 5, 10, then
+a module is unreachable: the page shows "Out of order" with "Technical
+problem — please try again later.", and `/api/status` lists both modules under
+`hardware` with `connected` and `last_error`. The daemon reconnects every 2, 5, 10, then
 30 seconds and returns to `idle` by itself once both modules have answered
 and the door sensor has been reading for 10 seconds without a break. A module
-that drops out during operation has the same effect. "Reason: maintenance"
-means the Out of order switch in the settings area is on; it never clears
-itself. "Reason: database" means a vend could not be recorded for the server
-(the disk refused); it clears when someone opens the settings and leaves them,
-or on a restart.
+that drops out during operation has the same effect. "Out of order" without
+the second line means either that the Out of order switch in the settings
+area is on (it never clears itself) or that a vend could not be recorded for
+the server (the disk refused; this clears when someone opens the settings and
+leaves them, or on a restart). The settings home screen names the reason
+("OUT OF ORDER · HARDWARE / MAINTENANCE / DATABASE").
 
-"Payment server not reachable" in `idle`, and "Payment currently not
-possible — please wait" instead of the QR code after a level was selected, mean
-the last request to the Monitoni server failed. Check the network, then
+"Payment currently not possible" at the bottom of the shelf list, and the
+plate with "The payment server is not reachable." instead of the QR code after
+a shelf was selected, mean the last request to the Monitoni server failed. Check the network, then
 `/api/status`: under `purchase_server`, `last_error` names the cause. `HTTP 401`
 is a wrong or missing `purchase_server.token`; a connect error or timeout is
 the network or the server. The messages go away with the next successful
-request. In the dev panel, "Outbox: N pending" is the number of `complete` and
-`close` reports the server has not accepted yet; they are retried after 1, 2,
-5, 15 and then every 60 seconds and survive a restart.
+request. "Queued reports" on the settings Network screen is the number of
+`complete` and `close` reports the server has not accepted yet; they are
+retried after 1, 2, 5, 15 and then every 60 seconds and survive a restart.
 
 The LED strip and the sounds: when the daemon starts it logs `ArtNet to
 <ip>:6454, universe 0, N pixels` and, after the first health poll, `WLED at
@@ -239,9 +289,8 @@ is reachable but the strip stays dark or shows WLED's own effect, the ArtNet
 settings in §1 are wrong (most often "Receive UDP realtime" off or the DMX
 mode not "Multi RGB"). In `/api/status`, `leds` shows `reachable`, the
 current `pattern` and `level`; every change of reachability is a `network`
-row `{"component": "wled", "reachable": …}` in the event log. The dev panel
-shows the same as "LEDs: idle · level – · reachable". For audio the start
-log says `audio: 44100 Hz, 2 channel(s), sounds from …`; `audio unavailable,
+row `{"component": "wled", "reachable": …}` in the event log. For audio the
+start log says `audio: 44100 Hz, 2 channel(s), sounds from …`; `audio unavailable,
 sounds are off: <error>` means no audio device was found (on the Pi: check
 that HDMI audio is enabled and the display or an amplifier is connected). A
 dead strip or missing audio never stops the machine from vending.
@@ -271,8 +320,8 @@ while the door sensor reads open ("Close the door first"). After 5 minutes
 without a touch the area closes by itself.
 
 To take the machine out of service: settings → Out of order switch → "Switch
-on" in the confirmation → Exit. Customers now see "Out of order" with the
-maintenance message; the switch stays on across restarts. To put it back:
+on" in the confirmation → Exit. Customers now see "Out of order" and nothing
+else; the switch stays on across restarts. To put it back:
 gear on the "Out of order" screen → PIN → switch off → confirm → Exit.
 
 Each section tests one component and shows its live state: Doors unlocks or
