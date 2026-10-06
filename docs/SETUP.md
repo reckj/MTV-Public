@@ -32,7 +32,18 @@ _To be written during integration._
 Static IP on the relay modules' subnet, reaching the purchase server, and what
 keeps working when there is no internet.
 
-_To be written during integration._
+Facts so far (no network step has been performed on a Pi yet):
+
+- The relay modules are on the local subnet with static IPs (§6); the machine
+  must reach them directly.
+- From the internet the daemon needs exactly one thing: HTTPS (or HTTP, as
+  configured) to `purchase_server.base_url`, for purchase checks and
+  completions. Nothing else is contacted: no updates, no telemetry.
+- Without the purchase server the machine keeps running: customers can browse,
+  the page says "Payment server not reachable", payments cannot be verified,
+  and completions wait in the outbox until the server answers again.
+
+_Configuring the Pi's network: to be written during integration._
 
 ## 5. Install the application
 
@@ -79,7 +90,9 @@ from `config/default.yaml`):
   counts. Confirm against the wiring.
 - `hardware.motor.motor_channel`, `spindle_channel` — the `relay_core`
   channels for the motor and the spindle lock. Confirm against the wiring.
-- `purchase_server.base_url` — where purchases are verified.
+- `purchase_server.base_url` — where purchases are verified. Mandatory on a
+  real machine: the default points at localhost and will only ever show
+  "Payment server not reachable".
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). Generated PNGs land
   in `data/qr/`; delete a file there to regenerate it after changing the
@@ -102,8 +115,11 @@ Steps performed so far (on a development laptop):
 
 ```
 cd monitoni
-.venv/bin/python -m monitoni --mock
+.venv/bin/python -m monitoni --mock --mock-purchase
 ```
+
+`--mock` uses simulated relay modules, `--mock-purchase` simulates payments;
+without the second flag the daemon talks to `purchase_server.base_url`.
 
 Then open http://127.0.0.1:8080/ in a browser. The page shows the current
 state in the header with a green "connected" badge, level buttons 1 to 10 in
@@ -131,6 +147,14 @@ hardware", and `/api/status` lists both modules under `hardware` with
 and the door sensor has been reading for 10 seconds without a break. A module
 that drops out during operation has the same effect. "Reason: maintenance" (from `system.maintenance_mode`) never clears
 itself.
+
+The page shows "Payment server not reachable" in `idle` and while a QR code
+is shown whenever the last request to the purchase server failed; it goes away
+with the next successful request. "Purchase rejected" appears briefly when the
+server answered that a scanned purchase is not valid. In the dev panel,
+"Outbox: N pending" is the number of purchase completions the server has not
+accepted yet; they are retried after 1, 2, 5, 15 and then every 60 seconds and
+survive a restart.
 
 _Real hardware start on a Pi: to be written during integration._
 
