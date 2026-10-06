@@ -299,8 +299,10 @@ class Flow:
         Invariant: status never shows a state whose entry hook has not completed.
         `self.state` is assigned right after `_enter` returns, with no await in
         between, so the tasks `_enter` starts never observe the old state. The
-        transition row is written after that; `dispatch` notifies once the lock is
-        released. A hook that raises ends in out_of_order (hardware) instead.
+        `on_transition` subscribers run right after that, still under the lock (the
+        daemon's motor stop relies on it), then the transition row is written;
+        `dispatch` pushes the status (`on_change`) once the lock is released. A hook
+        that raises ends in out_of_order (hardware) instead.
         """
         old_state = self.state
         level, purchase_id = self.selected_level, self.purchase_id  # before the hooks change them

@@ -66,6 +66,11 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - Read-back rule: every coil write is followed by a read of that coil; a
   mismatch is a `HardwareError`. Lock state is what the module reports. Relay
   ON = unlocked; relay OFF or power loss = locked.
+- Known state rule: nothing is assumed from memory. Doors locked, motor off
+  and spindle closed are written explicitly, with read-back, on every
+  (re)connect of the module (`RealHardware._connected`) and on every flow
+  transition (entry hook, motor stop); a module is not healthy until its
+  known-state write succeeded.
 - Error policy: a `HardwareError` in a hook or a settings tool, a lost module
   connection or a failed door poll puts the flow into `out_of_order
   (hardware)`; it returns to `idle` once the hardware has been healthy for
