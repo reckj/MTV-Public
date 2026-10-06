@@ -2,6 +2,8 @@
 
 import asyncio
 import contextlib
+import functools
+import io
 import json
 import logging
 from pathlib import Path
@@ -36,6 +38,7 @@ def create_app(daemon: "Daemon") -> web.Application:
     app.router.add_post("/api/command", api_command)
     app.router.add_get("/api/events", api_events)
     app.router.add_get(r"/api/qr/{level:\d+}.png", api_qr)
+    app.router.add_get(r"/api/qr/{level:\d+}.json", api_qr_json)
     app.router.add_get("/ws", websocket)
     app.router.add_static("/static", STATIC_DIR)
     app.on_startup.append(start_broadcaster)
@@ -128,16 +131,23 @@ async def api_command(request: web.Request) -> web.Response:
 # -- QR codes ------------------------------------------------------------------
 
 async def api_qr(request: web.Request) -> web.StreamResponse:
+    """The level's QR code as PNG, rendered in memory on first use and kept (it is a pure
+    function of qr.base_url and the level, so there is nothing to regenerate)."""
     daemon = request.app[DAEMON]
     level = int(request.match_info["level"])
     if not 1 <= level <= daemon.config.vending.levels:
         return error(404, f"level must be 1..{daemon.config.vending.levels}")
-    path = daemon.config.qr.dir / f"level_{level}.png"
-    if not path.exists():
-        data = qr_data(daemon.config.qr.base_url, level)
-        await asyncio.to_thread(write_qr_png, data, path)
-        log.info("generated %s for %s", path, data)
-    return web.FileResponse(path)
+    png = await asyncio.to_thread(qr_png, qr_data(daemon.config.qr.base_url, level))
+    return web.Response(body=png, content_type="image/png")
+
+
+async def api_qr_json(request: web.Request) -> web.Response:
+    """{level, data}: what the QR for a level encodes, for the settings screen."""
+    daemon = request.app[DAEMON]
+    level = int(request.match_info["level"])
+    if not 1 <= level <= daemon.config.vending.levels:
+        return error(404, f"level must be 1..{daemon.config.vending.levels}")
+    return web.json_response({"level": level, "data": qr_data(daemon.config.qr.base_url, level)})
 
 
 def qr_data(base_url: str, level: int) -> str:
@@ -147,9 +157,11 @@ def qr_data(base_url: str, level: int) -> str:
     return f"{base_url}?level={level}"
 
 
-def write_qr_png(data: str, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    qrcode.make(data).save(path)
+@functools.lru_cache(maxsize=64)
+def qr_png(data: str) -> bytes:
+    buffer = io.BytesIO()
+    qrcode.make(data).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 # -- WebSocket: status out, nothing in ---------------------------------------

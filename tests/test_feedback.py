@@ -13,6 +13,7 @@ from monitoni.hardware.mock import MockHardware
 from monitoni.leds import MockLeds
 from monitoni.outbox import Outbox
 from monitoni.purchase import MockPurchaseServer
+from monitoni.runtime import Runtime
 from tests.helpers import wait_until
 
 
@@ -28,7 +29,6 @@ async def make_flow(make_config):
 
     async def _make(maintenance: bool = False, leds_cls=MockLeds, **timings: float):
         config = make_config(**timings)
-        config.system.maintenance_mode = maintenance
         events = EventLog(config.database.path)
         await events.start()
         hardware = MockHardware(config.vending.levels)
@@ -39,7 +39,8 @@ async def make_flow(make_config):
                         config.purchase_server.outbox_backoff_s,
                         lambda: holder["flow"].state.value)
         await outbox.start()
-        flow = holder["flow"] = Flow(config, hardware, purchase, outbox, events)
+        flow = holder["flow"] = Flow(config, hardware, purchase, outbox, events,
+                                     runtime=Runtime(out_of_order=maintenance))
         leds, audio = leds_cls(config), MockAudio()
         feedback = Feedback(flow, leds, audio)
         await flow.start()

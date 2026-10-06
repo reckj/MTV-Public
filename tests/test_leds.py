@@ -6,7 +6,6 @@ import math
 
 import pytest
 
-from monitoni.config import apply_runtime
 from monitoni.leds import (
     BREATH_FLOOR,
     OFF,
@@ -213,9 +212,11 @@ async def test_brightness_scales_every_frame(make_leds, fake_artnet):
 
 
 async def test_runtime_json_overrides_the_configured_brightness(make_config, tmp_path):
+    from monitoni.runtime import Runtime
+
     config = make_config()
     (tmp_path / "runtime.json").write_text('{"brightness": 0.1}')
-    apply_runtime(config, tmp_path / "runtime.json")
+    Runtime.load(tmp_path / "runtime.json", config).apply(config)
     leds = MockLeds(config)
     assert leds.status()["brightness"] == 0.1
     leds.set_pattern("idle")

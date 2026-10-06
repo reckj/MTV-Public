@@ -9,6 +9,7 @@ from monitoni.daemon import Daemon
 from monitoni.hardware.base import HardwareError, HardwareFault
 from monitoni.hardware.mock import MockHardware
 from monitoni.purchase import MockPurchaseServer
+from monitoni.runtime import Runtime
 from monitoni.web.server import qr_data
 from tests.conftest import http_purchase
 from tests.helpers import command, events, status, wait_for_state, wait_until
@@ -34,11 +35,11 @@ async def make_daemon(make_config):
                     **timings: float) -> Daemon:
         config = make_config(**timings)
         config.hardware.mode = mode
-        config.system.maintenance_mode = maintenance
         purchase = (MockPurchaseServer() if purchase_fake is None
                     else http_purchase(config, purchase_fake))
+        runtime = Runtime(config.database.path.parent / "runtime.json", out_of_order=maintenance)
         daemon = Daemon(config, hardware_cls(config.vending.levels), purchase,
-                        leds=None if leds is None else leds(config))
+                        leds=None if leds is None else leds(config), runtime=runtime)
         daemon.recovery_check_s = 0.02
         daemon.recovery_dwell_s = dwell
         await daemon.start()
@@ -187,7 +188,11 @@ async def test_qr_png(client, daemon):
     async with client.get(daemon.url + "/api/qr/3.png") as resp:
         assert resp.status == 200 and resp.content_type == "image/png"
         assert (await resp.read())[:8] == b"\x89PNG\r\n\x1a\n"
-    assert (daemon.config.qr.dir / "level_3.png").exists()
+    async with client.get(daemon.url + "/api/qr/3.json") as resp:
+        assert resp.status == 200
+        assert await resp.json() == {"level": 3, "data": "https://www.monitoni.zhdk.ch?level=3"}
+    async with client.get(daemon.url + "/api/qr/11.json") as resp:
+        assert resp.status == 404
     for bad in ("0", "11", "abc"):
         async with client.get(daemon.url + f"/api/qr/{bad}.png") as resp:
             assert resp.status == 404, bad

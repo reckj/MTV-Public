@@ -18,6 +18,7 @@ from monitoni.hardware.base import HardwareError
 from monitoni.hardware.mock import MockHardware
 from monitoni.outbox import Outbox
 from monitoni.purchase import MockPurchaseServer, PurchaseServerError
+from monitoni.runtime import Runtime
 from tests.helpers import wait_until, wait_until_async
 
 ALLOWED = sorted(TRANSITIONS.items(), key=lambda kv: (kv[0][0].value, kv[0][1].value))
@@ -45,7 +46,6 @@ async def make_flow(make_config):
     async def _make(maintenance: bool = False, hardware_cls=MockHardware, purchase=None,
                     **timings: float) -> Flow:
         config = make_config(**timings)
-        config.system.maintenance_mode = maintenance
         events = EventLog(config.database.path)
         await events.start()
         hardware = hardware_cls(config.vending.levels)
@@ -56,7 +56,8 @@ async def make_flow(make_config):
                         config.purchase_server.outbox_backoff_s,
                         lambda: holder["flow"].state.value)
         await outbox.start()
-        flow = holder["flow"] = Flow(config, hardware, purchase, outbox, events)
+        flow = holder["flow"] = Flow(config, hardware, purchase, outbox, events,
+                                     runtime=Runtime(out_of_order=maintenance))
         await flow.start()
         started.append((flow, outbox, events))
         return flow

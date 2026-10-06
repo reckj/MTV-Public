@@ -1,18 +1,14 @@
 """Load config/default.yaml, overlay config/local.yaml, validate with pydantic.
 
-`apply_runtime` reads data/runtime.json, where the settings area will store the few values a
-user may change at runtime (LED brightness, audio volume); they win over the YAML at start.
+Installation config only. The three values a user changes on the machine (out of order, LED
+brightness, audio volume) live in data/runtime.json, see monitoni/runtime.py.
 """
 
-import json
-import logging
 from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
-log = logging.getLogger(__name__)
 
 Rgb = Annotated[list[Annotated[int, Field(ge=0, le=255)]], Field(min_length=3, max_length=3)]
 PixelRange = Annotated[list[Annotated[int, Field(ge=0)]], Field(min_length=2, max_length=2)]
@@ -31,8 +27,7 @@ class _Strict(BaseModel):
 class SystemConfig(_Strict):
     name: str
     machine_id: str
-    maintenance_mode: bool
-    maintenance_message: str
+    maintenance_message: str  # shown on the out-of-order screen while the runtime switch is on
 
 
 class RelayModuleConfig(_Strict):
@@ -129,6 +124,7 @@ class TimingsConfig(_Strict):
     door_unlock_timeout_s: float
     door_alarm_delay_s: float
     relock_delay_s: float = Field(ge=0)  # the lock pin drops back this long after the door opened
+    settings_timeout_s: float = Field(gt=0)  # settings area: auto-exit after this long untouched
 
 
 class VendingConfig(_Strict):
@@ -151,8 +147,13 @@ class PurchaseServerConfig(_Strict):
 
 
 class QrConfig(_Strict):
-    base_url: str
-    dir: Path
+    base_url: str  # the QR for level N encodes base_url + "?level=" + N; rendered on demand
+
+
+class SettingsConfig(_Strict):
+    """The settings area. The PIN is checked by the daemon; the browser never holds it."""
+
+    pin: str = Field(pattern=r"^[0-9]{4,8}$")
 
 
 class DatabaseConfig(_Strict):
@@ -167,6 +168,7 @@ class Config(_Strict):
     vending: VendingConfig
     purchase_server: PurchaseServerConfig
     qr: QrConfig
+    settings: SettingsConfig
     database: DatabaseConfig
 
 
@@ -234,34 +236,6 @@ def _zone_checks(zones: list[list[int]], levels: int, pixel_count: int) -> list[
                 errors.append(f"led.zones.{i}: [{start}, {end}] overlaps led.zones.{j} "
                               f"[{other_start}, {other_end}]")
     return errors
-
-
-def apply_runtime(config: Config, path: Path) -> None:
-    """Overlay data/runtime.json (written by the settings area, later) on the loaded config.
-
-    Only `brightness` (led) and `volume` (audio) are read, each a number in 0..1. A missing file
-    is normal; a malformed file or value is logged and ignored, the YAML values stand.
-    """
-    if not path.exists():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("top level must be an object")
-    except (OSError, ValueError) as exc:
-        log.warning("%s ignored: %s", path, exc)
-        return
-    for key, section, attr in (("brightness", config.led, "brightness"),
-                               ("volume", config.hardware.audio, "volume")):
-        if key not in data:
-            continue
-        value = data[key]
-        if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
-            log.warning("%s: %s must be a number in 0..1, not %r; using the config value",
-                        path, key, value)
-            continue
-        setattr(section, attr, float(value))
-        log.info("%s: %s = %s", path, key, value)
 
 
 def _read_yaml(path: Path) -> dict:

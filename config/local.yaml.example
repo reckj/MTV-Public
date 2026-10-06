@@ -47,3 +47,6 @@ purchase_server:
 
 qr:
   base_url: "https://www.monitoni.zhdk.ch"
+
+settings:
+  pin: "0000"              # CHANGE THIS: 4 to 8 digits; the daemon warns at start while it is 0000

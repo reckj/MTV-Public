@@ -5,8 +5,7 @@
 system:
   name: "MoniToni Vending Machine"
   machine_id: "VM001"
-  maintenance_mode: false
-  maintenance_message: "Machine under maintenance"
+  maintenance_message: "Machine under maintenance"   # shown while "Out of order" is switched on
 
 hardware:
   # real = talk to the modules below. Development always runs `python -m monitoni --mock`.
@@ -105,6 +104,7 @@ vending:
     door_unlock_timeout_s: 30
     door_alarm_delay_s: 10
     relock_delay_s: 0.5        # the lock pin drops back this long after the door opened
+    settings_timeout_s: 300    # the settings area closes after this long without a touch
 
 # The Monitoni server. Every call is a GET with the header "Monitoni-Terminal: <token>".
 purchase_server:
@@ -119,9 +119,15 @@ purchase_server:
 
 qr:
   # QR for level N encodes base_url + "?level=" + N: the old machines' pattern, which the
-  # purchase server expects. The machine id is sent with the purchase check, not in the QR.
+  # purchase server expects. Rendered in memory on demand; no files.
   base_url: "https://www.monitoni.zhdk.ch"
-  dir: "data/qr"          # generated PNGs; relative paths are resolved from the repo root
+
+# The settings area on the machine (gear icon, PIN). SETUP.md tells the installer to set the
+# PIN in local.yaml; the daemon warns at every start while it is still 0000.
+settings:
+  pin: "0000"                # 4 to 8 digits, as a string
 
 database:
-  path: "data/monitoni.db"   # relative paths are resolved from the repo root
+  path: "data/monitoni.db"   # relative paths are resolved from the repo root.
+                             # data/runtime.json next to it holds the three runtime switches
+                             # (out of order, brightness, volume), written by the daemon.

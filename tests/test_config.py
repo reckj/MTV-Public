@@ -1,4 +1,3 @@
-import logging
 import re
 from pathlib import Path
 
@@ -83,7 +82,6 @@ def test_milestone_1_sections_load():
     assert config.vending.levels == 10
     assert config.vending.timings.door_alarm_delay_s == 10.0
     assert config.purchase_server.permission_path == "/api/vending/permission"
-    assert str(config.qr.dir) == "data/qr"
     assert str(config.database.path) == "data/monitoni.db"
 
 
@@ -202,27 +200,25 @@ def test_feedback_values_are_checked(tmp_path, path, value):
         load_config(write_yaml(tmp_path / "default.yaml", data))
 
 
-def test_runtime_overrides_brightness_and_volume(tmp_path, caplog):
-    from monitoni.config import apply_runtime
+# -- Milestone 6: the settings area ------------------------------------------------------
 
+def test_settings_section_loads():
     config = load_config(DEFAULT_PATH)
-    apply_runtime(config, tmp_path / "missing.json")  # normal on a fresh machine
-    assert config.led.brightness == 0.6 and config.hardware.audio.volume == 0.7
+    assert config.settings.pin == "0000" and config.vending.timings.settings_timeout_s == 300.0
+    assert not hasattr(config.system, "maintenance_mode") and not hasattr(config.qr, "dir")
 
-    runtime = tmp_path / "runtime.json"
-    runtime.write_text('{"brightness": 0.25, "volume": 1}')
-    apply_runtime(config, runtime)
-    assert config.led.brightness == 0.25 and config.hardware.audio.volume == 1.0
 
-    runtime.write_text('{"brightness": 7, "volume": "loud", "other": 1}')
-    with caplog.at_level(logging.WARNING, logger="monitoni.config"):
-        apply_runtime(config, runtime)
-    assert config.led.brightness == 0.25 and config.hardware.audio.volume == 1.0  # unchanged
-    assert "brightness must be a number in 0..1, not 7" in caplog.text
-    assert "volume must be a number in 0..1, not 'loud'" in caplog.text
+@pytest.mark.parametrize("pin", ["123", "123456789", "12a4", 1234, ""],
+                         ids=["short", "long", "letters", "number", "empty"])
+def test_pin_must_be_4_to_8_digits_as_a_string(tmp_path, pin):
+    data = default_data()
+    data["settings"]["pin"] = pin
+    with pytest.raises(ConfigError, match=r"settings\.pin: "):
+        load_config(write_yaml(tmp_path / "default.yaml", data))
 
-    runtime.write_text("not json")
-    with caplog.at_level(logging.WARNING, logger="monitoni.config"):
-        apply_runtime(config, runtime)
-    assert config.led.brightness == 0.25
-    assert f"{runtime} ignored" in caplog.text
+
+@pytest.mark.parametrize("section,key", [("system", "maintenance_mode"), ("qr", "dir")])
+def test_deleted_keys_are_refused(tmp_path, section, key):
+    local = write_yaml(tmp_path / "local.yaml", {section: {key: True}})
+    with pytest.raises(ConfigError, match=re.escape(f"{section}.{key}: Extra inputs")):
+        load_config(DEFAULT_PATH, local)

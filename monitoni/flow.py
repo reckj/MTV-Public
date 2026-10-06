@@ -27,6 +27,7 @@ from monitoni.eventlog import EventLog
 from monitoni.hardware.base import Hardware, HardwareError
 from monitoni.outbox import Outbox
 from monitoni.purchase import Permitted, PurchaseServer, PurchaseServerError
+from monitoni.runtime import Runtime
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class Event(StrEnum):
 
 
 # why the machine is out_of_order
-REASON_MAINTENANCE = "maintenance"  # config flag, later the settings area; never clears itself
+REASON_MAINTENANCE = "maintenance"  # the runtime switch (settings area); never clears itself
 REASON_HARDWARE = "hardware"  # automatic; clears itself once the hardware is healthy again
 REASON_DATABASE = "database"  # a complete/close report was lost; manual clearing or a restart
 
@@ -110,12 +111,14 @@ class IllegalTransition(Exception):
 class Flow:
     def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer,
                  outbox: Outbox, events: EventLog,
-                 on_change: Callable[[], None] | None = None) -> None:
+                 on_change: Callable[[], None] | None = None,
+                 runtime: Runtime | None = None) -> None:
         self.config = config
         self.hardware = hardware
         self.purchase = purchase
         self.outbox = outbox
         self.events = events
+        self.runtime = runtime or Runtime()  # the out_of_order switch lives here
         self.on_change = on_change or (lambda: None)
         # called with (old or None at start, new) after a transition completed; errors are logged
         self.on_transition: list[Callable[[State | None, State], Awaitable[None]]] = []
@@ -137,7 +140,7 @@ class Flow:
 
     async def start(self) -> None:
         async with self._lock:
-            if self.config.system.maintenance_mode:
+            if self.runtime.out_of_order:
                 initial, self.reason = State.OUT_OF_ORDER, REASON_MAINTENANCE
             else:
                 initial, self.reason = State.IDLE, None

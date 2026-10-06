@@ -19,6 +19,7 @@ from monitoni.leds import Leds, MockLeds
 from monitoni.motor import Motor
 from monitoni.outbox import Outbox
 from monitoni.purchase import MockPurchaseServer, PurchaseServer
+from monitoni.runtime import Runtime
 from monitoni.web.server import create_app
 
 log = logging.getLogger(__name__)
@@ -30,10 +31,15 @@ class Daemon:
     recovery_holdoff_s = 30.0  # pause after a recovery attempt that ended in out_of_order again
 
     def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer,
-                 leds: Leds | None = None, audio: Audio | None = None) -> None:
+                 leds: Leds | None = None, audio: Audio | None = None,
+                 runtime: Runtime | None = None) -> None:
         self.config = config
         self.hardware = hardware
         self.purchase = purchase
+        if runtime is None:  # __main__ loads it before building the LEDs; tests mostly do not
+            runtime = Runtime.load(config.database.path.parent / "runtime.json", config)
+            runtime.apply(config)
+        self.runtime = runtime
         self.leds = leds or MockLeds(config)
         self.audio = audio or MockAudio(config.hardware.audio.volume, config.hardware.audio.enabled)
         self.events = EventLog(config.database.path)
@@ -42,7 +48,7 @@ class Daemon:
                              config.purchase_server.outbox_backoff_s,
                              lambda: self.flow.state.value, on_change=self.changed.set)
         self.flow = Flow(config, hardware, purchase, self.outbox, self.events,
-                         on_change=self._flow_changed)
+                         on_change=self._flow_changed, runtime=runtime)
         self.feedback = Feedback(self.flow, self.leds, self.audio)
         purchase.on_reachability = self._purchase_reachability
         self.leds.on_reachability = self._wled_reachability

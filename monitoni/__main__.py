@@ -9,19 +9,20 @@ import sys
 from pathlib import Path
 
 from monitoni.audio import Audio, MockAudio, PygameAudio
-from monitoni.config import Config, ConfigError, apply_runtime, load_config
+from monitoni.config import Config, ConfigError, load_config
 from monitoni.daemon import Daemon
 from monitoni.hardware.base import Hardware
 from monitoni.hardware.mock import MockHardware
 from monitoni.hardware.real import RealHardware
 from monitoni.leds import ArtnetLeds, Leds, MockLeds
 from monitoni.purchase import HttpPurchaseServer, MockPurchaseServer, PurchaseServer
+from monitoni.runtime import Runtime
 
 log = logging.getLogger("monitoni")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_DIR = REPO_ROOT / "config"
-RUNTIME_PATH = REPO_ROOT / "data" / "runtime.json"  # written by the settings area, later
+RUNTIME_PATH = REPO_ROOT / "data" / "runtime.json"  # the three switches of the settings area
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -59,9 +60,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # relative data paths are taken from the repo root, not the working directory
     config.database.path = REPO_ROOT / config.database.path
-    config.qr.dir = REPO_ROOT / config.qr.dir
     config.hardware.audio.dir = REPO_ROOT / config.hardware.audio.dir
-    apply_runtime(config, RUNTIME_PATH)
+    runtime = Runtime.load(RUNTIME_PATH, config)
+    runtime.apply(config)  # brightness and volume, before the LEDs and audio read the config
 
     if args.mock:
         config.hardware.mode = "mock"
@@ -107,18 +108,19 @@ def main(argv: list[str] | None = None) -> int:
             audio = MockAudio(config.hardware.audio.volume, config.hardware.audio.enabled)
         else:
             audio = PygameAudio(config.hardware.audio)
-    return asyncio.run(run(config, hardware, purchase, leds, audio))
+    return asyncio.run(run(config, hardware, purchase, leds, audio, runtime))
 
 
 async def run(config: Config, hardware: Hardware, purchase: PurchaseServer,
-              leds: Leds | None = None, audio: Audio | None = None) -> int:
+              leds: Leds | None = None, audio: Audio | None = None,
+              runtime: Runtime | None = None) -> int:
     """Start the daemon, wait for SIGINT/SIGTERM, stop it cleanly."""
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    daemon = Daemon(config, hardware, purchase, leds, audio)
+    daemon = Daemon(config, hardware, purchase, leds, audio, runtime)
     try:
         await daemon.start()
         await stop.wait()

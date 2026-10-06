@@ -22,13 +22,12 @@ def make_config(tmp_path):
         config.hardware.mode = "mock"
         config.web.port = 0
         config.database.path = tmp_path / "events.db"
-        config.qr.dir = tmp_path / "qr"
         config.purchase_server.poll_interval_s = 0.01
         config.purchase_server.outbox_backoff_s = [0.05, 0.1, 0.2]
         config.purchase_server.timeout_s = 0.3
         config.vending.timings.relock_delay_s = 0.05
         for key in ("sleep_timeout_s", "purchase_timeout_s",
-                    "door_unlock_timeout_s", "door_alarm_delay_s"):
+                    "door_unlock_timeout_s", "door_alarm_delay_s", "settings_timeout_s"):
             setattr(config.vending.timings, key, timings.get(key, LONG))
         motor = config.hardware.motor
         motor.spindle_pre_delay_ms, motor.spin_after_release_ms = 10, 10
