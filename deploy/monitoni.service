@@ -12,7 +12,10 @@ Type=simple
 User=monitoni
 Group=monitoni
 WorkingDirectory=/opt/monitoni
-ExecStart=/opt/monitoni/.venv/bin/python -m monitoni
+# the start options (MONITONI_OPTS) come from one file the installer edits, docs/SETUP.md
+# §6: empty on the machine, "--mock --mock-purchase" while commissioning. Missing file = empty.
+EnvironmentFile=-/etc/default/monitoni
+ExecStart=/opt/monitoni/.venv/bin/python -m monitoni $MONITONI_OPTS
 Restart=always
 RestartSec=5
 # Sounds: pygame/SDL straight to ALSA (Raspberry Pi OS Lite has no PipeWire). AUDIODEV is the

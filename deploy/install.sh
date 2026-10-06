@@ -4,8 +4,9 @@
 #   sudo /opt/monitoni/deploy/install.sh
 # Safe to run again: every step looks before it acts and says what it did. In this order:
 #   1. the user monitoni (if missing) and its groups video, input, render, audio
-#   2. the four units copied into /etc/systemd/system, then systemctl daemon-reload
-#   3. systemctl enable for the daemon, the kiosk and the nightly reload timer
+#   2. /etc/default/monitoni, the daemon's start options, from deploy/monitoni.default if absent
+#   3. the four units copied into /etc/systemd/system, then systemctl daemon-reload
+#   4. systemctl enable for the daemon, the kiosk and the nightly reload timer
 # Nothing is started here; SETUP §7 and §9 do that. Every line is also written out in SETUP.
 set -eu
 
@@ -36,7 +37,16 @@ for group in video input render audio; do
   fi
 done
 
-# 2. The units. A copy, not a link, so the running system never depends on the clone being
+# 2. The daemon's start options: a copy of deploy/monitoni.default, only if there is no file
+#    yet. The installer edits it (SETUP §6), so a later run never touches it.
+if [ -e /etc/default/monitoni ]; then
+  echo "/etc/default/monitoni: exists, left as it is"
+else
+  install -m 644 "$DEPLOY/monitoni.default" /etc/default/monitoni
+  echo "/etc/default/monitoni: created with MONITONI_OPTS empty (SETUP §6 says what to put there)"
+fi
+
+# 3. The units. A copy, not a link, so the running system never depends on the clone being
 #    where it was; run this script again after a change to a unit file.
 for unit in monitoni.service monitoni-kiosk.service \
             monitoni-kiosk-reload.service monitoni-kiosk-reload.timer; do
@@ -50,7 +60,7 @@ done
 systemctl daemon-reload
 echo "systemd: units reloaded"
 
-# 3. Start at boot. `enable` is quiet when the links exist already.
+# 4. Start at boot. `enable` is quiet when the links exist already.
 systemctl enable monitoni.service monitoni-kiosk.service monitoni-kiosk-reload.timer
 echo "enabled at boot: monitoni, monitoni-kiosk, monitoni-kiosk-reload.timer"
 echo "start them now with: sudo systemctl start monitoni monitoni-kiosk monitoni-kiosk-reload.timer"

@@ -333,11 +333,14 @@ It prints every step. What it does:
 1. Makes sure the user `monitoni` exists (Imager created it in §2) and is in
    the groups `video`, `input`, `render` (cage: the display, the touch
    panel, the graphics chip) and `audio` (the daemon's HDMI sound).
-2. Copies the four unit files from `deploy/` into `/etc/systemd/system/`
+2. Puts the daemon's options file `/etc/default/monitoni` in place (a copy
+   of `deploy/monitoni.default`, only if there is none yet): one line,
+   `MONITONI_OPTS=""`. §6 says what to put there on day one.
+3. Copies the four unit files from `deploy/` into `/etc/systemd/system/`
    (`monitoni.service`, `monitoni-kiosk.service`,
    `monitoni-kiosk-reload.service`, `monitoni-kiosk-reload.timer`) and tells
    systemd to read them (`systemctl daemon-reload`).
-3. Enables the daemon, the kiosk and the nightly reload timer
+4. Enables the daemon, the kiosk and the nightly reload timer
    (`systemctl enable …`), so they start at every boot.
 
 Nothing is started yet: §6 configures the machine first, §7 and §9 start the
@@ -417,6 +420,26 @@ the three switches a user changes on the machine: `out_of_order` (true keeps
 the machine on the "Out of order" screen across restarts), `brightness` and
 `volume` (0 to 1). Deleting the file resets all three to the configuration;
 do not edit it by hand while the daemon runs.
+
+**The daemon's start options** live in one file, `/etc/default/monitoni`
+(put there by `install.sh`, §5), with one line: `MONITONI_OPTS=""`. The
+empty value is the machine's setting: the modules from `local.yaml` and the
+Monitoni server with the machine's token. On day one, with no modules on the
+network and no token yet, set it to the commissioning value:
+
+```
+sudo nano /etc/default/monitoni
+```
+
+and make the line read `MONITONI_OPTS="--mock --mock-purchase"` (Ctrl+O,
+Enter saves, Ctrl+X leaves). The daemon then simulates the hardware and the
+payments, as on the laptop (§7), whatever `hardware.mode` says. When the
+token is in `local.yaml` and the modules are reachable, set the line back to
+`MONITONI_OPTS=""`. Either change is applied by:
+
+```
+sudo systemctl restart monitoni
+```
 
 On the development laptop none of these are set; mock mode runs on the
 defaults. Setting them on a Pi: _to be written during integration._
@@ -608,8 +631,9 @@ sudo systemctl start monitoni-kiosk-reload.timer
 ```
 
 - `monitoni` — the daemon, `/opt/monitoni/.venv/bin/python -m monitoni` as
-  the user `monitoni`, with `config/local.yaml` from §6. If it ever exits,
-  systemd starts it again after 5 seconds. Its sound goes straight to the
+  the user `monitoni`, with `config/local.yaml` and the start options from
+  `/etc/default/monitoni` (both §6). If it ever exits, systemd starts it
+  again after 5 seconds. Its sound goes straight to the
   HDMI output (`deploy/monitoni.service` sets `SDL_AUDIODRIVER=alsa` and
   `AUDIODEV`).
 - `monitoni-kiosk` — the display: cage with Chromium full screen on the Pi's

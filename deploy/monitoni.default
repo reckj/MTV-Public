@@ -1,0 +1,9 @@
+# The MoniToni daemon's start options. Read by monitoni.service at every start; a change is
+# applied with: sudo systemctl restart monitoni
+#
+# The machine's setting is the empty value: the relay modules from config/local.yaml and the
+# Monitoni purchase server with the machine's token.
+# While commissioning, with no modules on the network and no token yet, use
+#   MONITONI_OPTS="--mock --mock-purchase"
+# (simulated hardware and payments; the dev commands in docs/SETUP.md §7 work then).
+MONITONI_OPTS=""
