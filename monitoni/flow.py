@@ -4,6 +4,8 @@ Transitions are a table. One timeout at a time, cancelled on every transition.
 All hardware side effects live in `_enter` and `_leave`; `unlock_door` is called
 from exactly one place, every lock goes through the idle/out_of_order hook.
 A hardware error inside a hook ends in out_of_order with reason "hardware".
+Subscribers in `on_transition` (feedback: LEDs and sound) hear about every completed
+transition and cannot break one; the flow itself knows nothing about light or sound.
 A door opened while none should be open (idle, sleep, checking_purchase) is
 door_forced: alarm on until the door is closed, no timeout, nothing reported.
 The purchase server learns two things, both through the outbox (durable, retried
@@ -14,7 +16,7 @@ level relocks relock_delay_s after the door opened (the pin catches on close).
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
 from monitoni.config import Config
@@ -109,6 +111,8 @@ class Flow:
         self.outbox = outbox
         self.events = events
         self.on_change = on_change or (lambda: None)
+        # called with (old or None at start, new) after a transition completed; errors are logged
+        self.on_transition: list[Callable[[State | None, State], Awaitable[None]]] = []
 
         self.state = State.IDLE
         self.reason: str | None = None  # while out_of_order: maintenance | hardware
@@ -137,6 +141,7 @@ class Flow:
                 await self._fault(initial, exc)
                 initial = State.OUT_OF_ORDER
             self.state = initial
+            await self._notify(None, initial)
             await self.events.write("daemon", initial.value,
                                     details={"event": "start", "reason": self.reason})
         self.on_change()
@@ -232,6 +237,7 @@ class Flow:
         except Exception as exc:
             await self._fault(new_state, exc)
             self.state = State.OUT_OF_ORDER
+            await self._notify(old_state, self.state)
             await self.events.write("transition", self.state.value, level=level,
                                     purchase_id=purchase_id,
                                     details={"from": old_state.value, "to": self.state.value,
@@ -239,11 +245,21 @@ class Flow:
                                              "attempted": new_state.value, "error": str(exc)})
             return
         self.state = new_state
+        await self._notify(old_state, new_state)
         details = {"from": old_state.value, "to": new_state.value, "event": event.value}
         if error is not None:
             details["error"] = error
         await self.events.write("transition", new_state.value, level=level,
                                 purchase_id=purchase_id, details=details)
+
+    async def _notify(self, old: State | None, new: State) -> None:
+        """Tell the subscribers. A subscriber's error is logged; it never undoes a transition."""
+        for subscriber in self.on_transition:
+            try:
+                await subscriber(old, new)
+            except Exception:
+                log.exception("on_transition subscriber failed for %s -> %s",
+                              None if old is None else old.value, new.value)
 
     async def _fault(self, attempted: State, exc: Exception) -> None:
         """Entering `attempted` failed: become out_of_order (hardware). Called under the lock."""
@@ -281,14 +297,12 @@ class Flow:
             self.selected_level = None
             self.purchase_id = None
             self.reason = None
-            # hook: LED idle animation (later milestone)
         elif state is State.CHECKING_PURCHASE:
             self.purchase_id = uuid.uuid4().hex
             self._poll_task = asyncio.create_task(
                 self._poll_purchase(self.selected_level), name="purchase-poll")
         elif state is State.DOOR_UNLOCKED:
             await self.hardware.unlock_door(self.selected_level)
-            # hook: LED level highlight + success sound (later milestone)
         elif state is State.DOOR_OPENED:
             # the vend is complete the moment the door is open; nothing after this changes it
             await self._enqueue("complete", self.selected_level)
@@ -296,7 +310,6 @@ class Flow:
                                                     name="relock")
         elif state in (State.DOOR_ALARM, State.DOOR_FORCED):
             await self.hardware.alarm(True)
-            # hook: alarm sound + LED flash (later milestone)
         elif state is State.COMPLETING:
             self._complete_task = asyncio.create_task(self._complete(), name="purchase-complete")
         self._start_timeout(state)
