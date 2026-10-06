@@ -5,6 +5,8 @@ import pytest
 
 from monitoni.config import Config, load_config
 from monitoni.hardware import modbus
+from monitoni.purchase import HttpPurchaseServer
+from tests.fake_purchase_server import FakePurchaseServer
 from tests.fake_waveshare import FakeWaveshare
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "config" / "default.yaml"
@@ -22,6 +24,8 @@ def make_config(tmp_path):
         config.database.path = tmp_path / "events.db"
         config.qr.dir = tmp_path / "qr"
         config.purchase_server.poll_interval_s = 0.01
+        config.purchase_server.outbox_backoff_s = [0.05, 0.1, 0.2]
+        config.purchase_server.timeout_s = 0.3
         for key in ("sleep_timeout_s", "purchase_timeout_s",
                     "door_unlock_timeout_s", "door_alarm_delay_s"):
             setattr(config.vending.timings, key, timings.get(key, LONG))
@@ -37,6 +41,21 @@ def make_config(tmp_path):
 async def client():
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
         yield session
+
+
+@pytest.fixture
+async def purchase_fake():
+    """A fake HTTP purchase server for machine VM001."""
+    fake = FakePurchaseServer()
+    await fake.start()
+    yield fake
+    await fake.stop()
+
+
+def http_purchase(config: Config, fake: FakePurchaseServer) -> HttpPurchaseServer:
+    """An HTTP purchase client pointed at the fake (not started)."""
+    config.purchase_server.base_url = fake.url
+    return HttpPurchaseServer(config.purchase_server, config.system.machine_id)
 
 
 @pytest.fixture

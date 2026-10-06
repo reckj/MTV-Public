@@ -11,6 +11,18 @@ async def wait_until(predicate, what: str, timeout: float = 2.0) -> None:
         await asyncio.sleep(0.005)
 
 
+async def wait_until_async(check, what: str, timeout: float = 2.0):
+    """Like wait_until for an async check; returns the first truthy result."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        result = await check()
+        if result:
+            return result
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"timed out waiting for {what}")
+        await asyncio.sleep(0.01)
+
+
 # -- HTTP against a running Daemon ----------------------------------------------
 
 async def command(client, daemon, **body):
