@@ -22,7 +22,6 @@ log = logging.getLogger("monitoni")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_DIR = REPO_ROOT / "config"
-RUNTIME_PATH = REPO_ROOT / "data" / "runtime.json"  # the three switches of the settings area
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -61,7 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     # relative data paths are taken from the repo root, not the working directory
     config.database.path = REPO_ROOT / config.database.path
     config.hardware.audio.dir = REPO_ROOT / config.hardware.audio.dir
-    runtime = Runtime.load(RUNTIME_PATH, config)
+    # the three runtime switches live next to the database: data/runtime.json by default
+    runtime = Runtime.load(config.database.path.parent / "runtime.json", config)
     runtime.apply(config)  # brightness and volume, before the LEDs and audio read the config
 
     if args.mock:
