@@ -13,6 +13,7 @@ from monitoni.eventlog import EventLog
 from monitoni.flow import REASON_HARDWARE, Event, Flow, IllegalTransition, State
 from monitoni.hardware.base import DoorEvent, Hardware, HardwareError, HardwareFault
 from monitoni.motor import Motor
+from monitoni.outbox import Outbox
 from monitoni.purchase import MockPurchaseServer, PurchaseServer
 from monitoni.web.server import create_app
 
@@ -30,7 +31,13 @@ class Daemon:
         self.purchase = purchase
         self.events = EventLog(config.database.path)
         self.changed = asyncio.Event()  # set by the flow on every state change
-        self.flow = Flow(config, hardware, purchase, self.events, on_change=self._flow_changed)
+        self.outbox = Outbox(config.database.path, purchase, self.events,
+                             config.purchase_server.outbox_backoff_s,
+                             lambda: self.flow.state.value, on_change=self.changed.set)
+        self.flow = Flow(config, hardware, purchase, self.outbox, self.events,
+                         on_change=self._flow_changed)
+        purchase.on_reachability = self._purchase_reachability
+        self._row_tasks: set[asyncio.Task] = set()
         self.motor = Motor(config.hardware.motor, hardware, self.events, hardware.events,
                            lambda: self.flow.state.value, on_change=self.changed.set)
         self._started_at: float | None = None
@@ -45,6 +52,10 @@ class Daemon:
         try:
             await self.events.start()
             self._stops.append(self.events.stop)
+            await self.purchase.start()
+            self._stops.append(self.purchase.stop)
+            await self.outbox.start()
+            self._stops.append(self.outbox.stop)
             await self.hardware.start()
             self._stops.append(self.hardware.stop)
             self._stops.append(lambda: self.stop_motor("daemon_stop"))
@@ -104,6 +115,19 @@ class Daemon:
         """Hard stop; a hardware error is logged and queued as a fault by the motor itself."""
         with contextlib.suppress(HardwareError):
             await self.motor.stop(reason)
+
+    # -- purchase server -----------------------------------------------------
+
+    def _purchase_reachability(self, ok: bool) -> None:
+        """One `network` row per change of reachability, and a status push."""
+        details = {"purchase_server": "reachable" if ok else "unreachable",
+                   "error": self.purchase.status().get("last_error")}
+        task = asyncio.get_running_loop().create_task(
+            self.events.write("network", self.flow.state.value, details=details),
+            name="network-row")
+        self._row_tasks.add(task)
+        task.add_done_callback(self._row_tasks.discard)
+        self.changed.set()
 
     # -- hardware events -----------------------------------------------------
 
@@ -182,4 +206,6 @@ class Daemon:
             "maintenance_message": self.config.system.maintenance_message,
             "hardware": hardware,
             "motor": self.motor.status(),
+            "purchase_server": {**self.purchase.status(),
+                                "outbox_pending": self.outbox.pending_count},
         }

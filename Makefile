@@ -14,7 +14,7 @@ install: $(BIN)/python
 	$(BIN)/pip install -q -r requirements.txt -r requirements-dev.txt
 
 dev: install
-	$(BIN)/python -m monitoni --mock
+	$(BIN)/python -m monitoni --mock --mock-purchase
 
 test: install
 	$(BIN)/python -m pytest

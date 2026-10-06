@@ -1,15 +1,20 @@
 """The daemon in real mode against two fake Waveshare modules, end to end over HTTP."""
 
+import asyncio
+
 import pytest
 
 from monitoni.daemon import Daemon
 from monitoni.hardware.real import RealHardware
 from monitoni.purchase import MockPurchaseServer
-from tests.helpers import command, events, status, wait_for_state
+from tests.conftest import http_purchase
+from tests.helpers import command, events, status, wait_for_state, wait_until
 
 
-def make_real_daemon(config) -> Daemon:
-    daemon = Daemon(config, RealHardware(config), MockPurchaseServer())
+def make_real_daemon(config, purchase_fake=None) -> Daemon:
+    purchase = (MockPurchaseServer() if purchase_fake is None
+                else http_purchase(config, purchase_fake))
+    daemon = Daemon(config, RealHardware(config), purchase)
     daemon.recovery_check_s = 0.02
     daemon.recovery_dwell_s = 0.05
     return daemon
@@ -116,3 +121,99 @@ async def test_turn_button_in_real_mode(client, daemon, fakes):
     code, body = await command(client, daemon, command="motor_release")
     assert code == 200 and core.coils[:2] == [False, False]
     assert body["hardware"]["motor"] == {"running": False, "spindle_open": False}
+
+
+# -- with the HTTP purchase fake as well: all three fakes ------------------------------
+
+async def open_and_close_the_door(client, daemon, core) -> dict:
+    core.inputs[0] = False
+    await wait_for_state(client, daemon, "door_opened")
+    core.inputs[0] = True
+    return await wait_for_state(client, daemon, "idle")
+
+
+async def test_full_vend_against_the_purchase_fake(client, real_config, fakes, purchase_fake):
+    core, levels = fakes
+    daemon = make_real_daemon(real_config, purchase_fake)
+    await daemon.start()
+    try:
+        await command(client, daemon, command="select_level", level=3)
+        await wait_until(lambda: purchase_fake.requests, "first poll")
+        assert purchase_fake.requests[0] == ("/api/purchase/check",
+                                             {"machine_id": "VM001", "level": 3})
+        purchase_fake.pay(3, purchase_id="p-vend")
+        body = await wait_for_state(client, daemon, "door_unlocked")
+        assert body["purchase_id"] == "p-vend" and levels.coils[2] is True
+        body = await open_and_close_the_door(client, daemon, core)
+        await wait_until(lambda: purchase_fake.completions, "completion delivered")
+        assert purchase_fake.completions == [
+            {"purchase_id": "p-vend", "machine_id": "VM001", "level": 3, "success": True}]
+        assert body["purchase_server"]["outbox_pending"] == 0 or \
+            (await status(client, daemon))["purchase_server"]["outbox_pending"] == 0
+    finally:
+        await daemon.stop()
+
+
+async def test_completion_survives_a_purchase_server_outage_and_a_daemon_restart(
+        client, real_config, fakes, purchase_fake):
+    core, levels = fakes
+    port = purchase_fake.port
+    daemon = make_real_daemon(real_config, purchase_fake)
+    await daemon.start()
+    try:
+        await command(client, daemon, command="select_level", level=2)
+        purchase_fake.pay(2, purchase_id="p-late")
+        await wait_for_state(client, daemon, "door_unlocked")
+        core.inputs[0] = False
+        await wait_for_state(client, daemon, "door_opened")
+        await purchase_fake.stop()  # the server goes away before the door closes
+        core.inputs[0] = True
+        body = await wait_for_state(client, daemon, "idle")
+        await wait_until(lambda: daemon.outbox.pending_count == 1, "queued completion")
+        await wait_until(lambda: (daemon.purchase.reachable is False), "unreachable noticed")
+        body = await status(client, daemon)
+        assert body["purchase_server"]["outbox_pending"] == 1
+        assert body["purchase_server"]["reachable"] is False
+        assert purchase_fake.completions == []
+    finally:
+        await daemon.stop()
+
+    daemon = make_real_daemon(real_config, purchase_fake)  # restart with the same database
+    await daemon.start()
+    try:
+        assert daemon.outbox.pending_count == 1
+        await asyncio.sleep(0.2)
+        assert purchase_fake.completions == [] and daemon.outbox.pending_count == 1
+        await purchase_fake.start(port=port)
+        await wait_until(lambda: purchase_fake.completions, "delivery after the restart")
+        assert purchase_fake.completions == [
+            {"purchase_id": "p-late", "machine_id": "VM001", "level": 2, "success": True}]
+        await wait_until(lambda: daemon.outbox.pending_count == 0, "outbox empty")
+    finally:
+        await daemon.stop()
+
+
+async def test_unlock_timeout_reports_success_false_to_the_server(client, make_config, fakes,
+                                                                  purchase_fake, monkeypatch):
+    from monitoni.hardware import modbus
+    monkeypatch.setattr(modbus, "RECONNECT_BACKOFF", (0.05,))
+    core, levels = fakes
+    config = make_config(door_unlock_timeout_s=0.1)
+    config.hardware.mode = "real"
+    for module, fake in ((config.hardware.relay_core, core),
+                         (config.hardware.relay_levels, levels)):
+        module.host, module.port, module.timeout = "127.0.0.1", fake.port, 0.3
+    config.hardware.door_sensor.poll_interval_ms = 10
+    daemon = make_real_daemon(config, purchase_fake)
+    await daemon.start()
+    try:
+        await command(client, daemon, command="select_level", level=5)
+        purchase_fake.pay(5, purchase_id="p-timeout")
+        await wait_for_state(client, daemon, "door_unlocked")
+        await wait_for_state(client, daemon, "idle")
+        await wait_until(lambda: purchase_fake.completions, "success=false delivered")
+        assert purchase_fake.completions == [
+            {"purchase_id": "p-timeout", "machine_id": "VM001", "level": 5, "success": False}]
+        assert levels.coils == [False] * 30
+    finally:
+        await daemon.stop()

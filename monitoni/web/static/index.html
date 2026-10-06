@@ -16,6 +16,8 @@
   <main>
     <section data-state="idle">
       <h1>Select a level</h1>
+      <p class="net_hint">Payment server not reachable</p>
+      <p id="rejected">Purchase rejected</p>
       <div id="levels" class="levels"></div>
       <button id="turn">TURN</button>
     </section>
@@ -26,6 +28,7 @@
 
     <section data-state="checking_purchase">
       <h1>Scan to pay</h1>
+      <p class="net_hint">Payment server not reachable</p>
       <p>Level <span class="selected_level"></span></p>
       <img id="qr" alt="QR code" src="">
       <button data-command="cancel">Cancel</button>
@@ -71,6 +74,7 @@
     <p>Doors: <span id="doors"></span></p>
     <p>Purchase: <span id="purchase_id">–</span></p>
     <p>Motor: <span id="motor"></span></p>
+    <p>Outbox: <span id="outbox"></span> · Purchase server: <span id="purchase_server"></span></p>
     <pre id="hardware"></pre>
     <ol id="events" reversed></ol>
   </aside>

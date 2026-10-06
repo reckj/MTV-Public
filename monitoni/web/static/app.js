@@ -33,6 +33,8 @@ function render(status) {
   document.body.dataset.motor = status.motor.running ? "running" : status.motor.pressed ? "pressed" : "";
   document.body.dataset.hardware = status.hardware_mode;
   document.body.dataset.purchase = status.purchase_mode;
+  document.body.dataset.reachable = String(status.purchase_server.reachable);
+  document.body.dataset.lastResult = status.last_result ?? "";
 
   const qr = $("qr");
   const src = status.qr_url ?? "";
@@ -55,6 +57,8 @@ function render(status) {
     $("doors").textContent = Object.entries(status.doors)
       .map(([n, s]) => `${n}:${s === "locked" ? "🔒" : s === "unlocked" ? "🔓" : "?"}`).join(" ");
     $("motor").textContent = JSON.stringify(status.motor);
+    $("outbox").textContent = `${status.purchase_server.outbox_pending} pending`;
+    $("purchase_server").textContent = JSON.stringify(status.purchase_server);
     $("hardware").textContent = JSON.stringify(status.hardware, null, 1);
     loadEvents();
   }

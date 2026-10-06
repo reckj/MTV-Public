@@ -1,4 +1,4 @@
-"""Entry point: python -m monitoni [--mock] [--config-dir DIR] [--log-level LEVEL]."""
+"""Entry point: python -m monitoni [--mock] [--mock-purchase] [--config-dir DIR] [--log-level L]."""
 
 import argparse
 import asyncio
@@ -12,7 +12,7 @@ from monitoni.daemon import Daemon
 from monitoni.hardware.base import Hardware
 from monitoni.hardware.mock import MockHardware
 from monitoni.hardware.real import RealHardware
-from monitoni.purchase import MockPurchaseServer, PurchaseServer
+from monitoni.purchase import HttpPurchaseServer, MockPurchaseServer, PurchaseServer
 
 log = logging.getLogger("monitoni")
 
@@ -24,6 +24,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="monitoni", description="MoniToni vending daemon")
     parser.add_argument("--mock", action="store_true",
                         help="use mock hardware regardless of hardware.mode in config")
+    parser.add_argument("--mock-purchase", action="store_true",
+                        help="simulate payments instead of talking to purchase_server.base_url")
     parser.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
                         help="directory holding default.yaml and local.yaml")
     parser.add_argument("--log-level", default="INFO",
@@ -64,8 +66,12 @@ def main(argv: list[str] | None = None) -> int:
         hardware = RealHardware(config)
     else:
         hardware = MockHardware(config.vending.levels)
-    # the purchase server is still the mock in every mode; the HTTP client is a later milestone
-    return asyncio.run(run(config, hardware, MockPurchaseServer()))
+    purchase: PurchaseServer
+    if args.mock_purchase:
+        purchase = MockPurchaseServer()
+    else:
+        purchase = HttpPurchaseServer(config.purchase_server, config.system.machine_id)
+    return asyncio.run(run(config, hardware, purchase))
 
 
 async def run(config: Config, hardware: Hardware, purchase: PurchaseServer) -> int:

@@ -82,6 +82,11 @@ body[data-motor="pressed"] #turn { background: #7a2a1e; }
 body[data-motor="running"] #turn { background: #222; color: #e8503a; }
 
 #reason { color: #f90; }
+
+/* purchase server: hint while unreachable, flash after a rejected purchase */
+.net_hint, #rejected { display: none; margin: 0 0 12px; }
+body[data-reachable="false"] .net_hint { display: block; color: #f90; }
+body[data-last-result="invalid"] #rejected { display: block; color: #f55; font-weight: bold; }
 body[data-reason="hardware"] #maintenance_message { display: none; }  /* that text is for maintenance only */
 
 #qr {
