@@ -281,6 +281,7 @@ class Daemon:
                           "max_run_s": motor_cfg.max_run_s},
                 "led": {"zones": self.config.led.zones},
                 "door_locks": {"channels": self.config.hardware.door_locks.channels},
+                "wled": {"ip_address": self.config.hardware.wled.ip_address},
             },
         }
 

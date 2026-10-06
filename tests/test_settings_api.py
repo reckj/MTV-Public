@@ -333,5 +333,6 @@ async def test_status_additions(client, daemon):
                   "spindle_post_delay_ms": 5, "max_run_s": 10.0},
         "led": {"zones": [[12 * i, 12 * i + 11] for i in range(10)]},
         "door_locks": {"channels": list(range(1, 11))},
+        "wled": {"ip_address": "192.168.1.102"},
     }
     assert "token" not in json.dumps(body)

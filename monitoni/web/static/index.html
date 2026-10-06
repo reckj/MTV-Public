@@ -4,9 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MoniToni</title>
+  <link rel="stylesheet" href="/static/fonts.css">
+  <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/settings.css">
 </head>
-<body data-state="">
+<body data-state="" data-screen="">
   <header>
     <span id="state_name">–</span>
     <span id="countdown"></span>
@@ -15,6 +18,7 @@
 
   <main>
     <section data-state="idle">
+      <button class="gear" data-gear aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
       <h1>Select a level</h1>
       <p class="net_hint">Payment server not reachable</p>
       <div id="levels" class="levels"></div>
@@ -57,6 +61,7 @@
     </section>
 
     <section data-state="out_of_order">
+      <button class="gear" data-gear aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
       <h1>Out of order</h1>
       <p id="maintenance_message"></p>
       <p id="reason"></p>
@@ -64,8 +69,6 @@
 
     <section data-state="settings">
       <h1>Settings</h1>
-      <p>Service area (dev page: the controls are in the block below).</p>
-      <button id="turn_settings" class="turn_small">TURN</button>
     </section>
   </main>
 
@@ -83,43 +86,153 @@
     <p>Audio: <span id="audio"></span></p>
     <p>Outbox: <span id="outbox"></span> · Purchase server: <span id="purchase_server"></span></p>
     <pre id="hardware"></pre>
-    <fieldset id="settings_block">
-      <legend>Settings (Part A)</legend>
-      <div class="row">
-        <input id="pin" type="password" inputmode="numeric" placeholder="PIN" size="6" autocomplete="off">
-        <button data-settings="enter">Enter settings</button>
-        <button data-settings="exit">Exit</button>
-        <label><input type="checkbox" id="ooo"> Out of order</label>
-      </div>
-      <div class="row">
-        <select id="door_level"></select>
-        <button data-settings="door" data-unlock="true">Unlock</button>
-        <button data-settings="door" data-unlock="false">Lock</button>
-        <button data-settings="lock_all">Lock all</button>
-        <button data-settings="spindle" data-open="true">Spindle open</button>
-        <button data-settings="spindle" data-open="false">Spindle close</button>
-      </div>
-      <div class="row">
-        <button data-settings="leds" data-action="off">LEDs off</button>
-        <button data-settings="leds" data-action="fill">LEDs white</button>
-        <button data-settings="leds" data-action="level">Light level</button>
-        <button data-settings="audio" data-action="play" data-sound="success">Play success</button>
-        <button data-settings="audio" data-action="play" data-sound="alarm">Play alarm</button>
-        <button data-settings="audio" data-action="stop">Stop</button>
-      </div>
-      <div class="row">
-        <label>Brightness <input id="brightness" type="range" min="0" max="100"></label>
-        <label>Volume <input id="volume" type="range" min="0" max="100"></label>
-        <button data-settings="test_server">Test server</button>
-        <span id="test_result"></span>
-      </div>
-      <p>Settings: <span id="settings_status"></span></p>
-      <p>Summary: <span id="summary"></span></p>
-      <p id="settings_error"></p>
-    </fieldset>
     <ol id="events" reversed></ol>
   </aside>
 
+  <div id="settings">
+    <section data-screen="S0">
+    <div class="top"><button class="back" data-nav="cancel">‹ Cancel</button><div class="title">Settings</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="cap center" style="margin-top:30px">Enter PIN</div>
+        <div class="pin" id="pin_dots"></div>
+        <div class="grid3 bottom" id="keypad">
+          <button class="tile key" data-key="1">1</button><button class="tile key" data-key="2">2</button><button class="tile key" data-key="3">3</button>
+          <button class="tile key" data-key="4">4</button><button class="tile key" data-key="5">5</button><button class="tile key" data-key="6">6</button>
+          <button class="tile key" data-key="7">7</button><button class="tile key" data-key="8">8</button><button class="tile key" data-key="9">9</button>
+          <button class="tile key dim" data-key="C">C</button><button class="tile key" data-key="0">0</button><button class="tile key dim" data-key="back">⌫</button>
+        </div>
+        <button class="tile btn p" id="pin_enter">Enter</button>
+      </div>
+    </section>
+
+    <section data-screen="S1">
+    <div class="top"><button class="back" id="exit_btn">‹ Exit</button><div class="title">Settings</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="strip" id="strip"></div>
+        <div class="problem" id="problem"></div>
+        <div class="tile card"><div class="r"><span>Out of order</span><button class="sw" id="ooo_switch" aria-label="Out of order"></button></div></div>
+        <div class="tile card">
+          <button class="r" data-nav="S2"><span>Doors</span><span class="chev">›</span></button>
+          <button class="r" data-nav="S3"><span>Motor</span><span class="chev">›</span></button>
+          <button class="r" data-nav="S4"><span>LEDs</span><span class="chev">›</span></button>
+          <button class="r" data-nav="S5"><span>Audio</span><span class="chev">›</span></button>
+          <button class="r" data-nav="S6"><span>Network</span><span class="chev">›</span></button>
+          <button class="r" data-nav="S7"><span>QR codes</span><span class="chev">›</span></button>
+          <button class="r" data-nav="S8"><span>Events</span><span class="chev">›</span></button>
+        </div>
+        <div class="sim" id="sim"><span class="cap">Simulation</span><div><button class="sb" id="sim_pay">Pay</button><button class="sb" id="sim_open">Open</button><button class="sb" id="sim_close">Close</button></div></div>
+        <div class="foot"><span id="foot_left"></span><span id="foot_right"></span></div>
+      </div>
+    </section>
+
+    <section data-screen="S2">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">Doors</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="tile"><div class="cap center" style="padding-top:14px">Door sensor</div><div class="big" id="sensor">?</div></div>
+        <div class="tile card" id="door_rows"></div>
+        <button class="tile btn bottom" id="lock_all">Lock all doors</button>
+      </div>
+    </section>
+
+    <section data-screen="S3">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">Motor</div><div class="spacer"></div></div>
+      <div class="body">
+        <button class="tile cream turn" id="turn_s3"><div><b>TURN</b><small>HOLD TO ROTATE</small></div><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="26"/><circle cx="32" cy="32" r="4"/><path d="M32 6v8M32 50v8M6 32h8M50 32h8"/><path d="M48 18a22 22 0 0 1 4 10" stroke-width="3"/><path d="M50 30l3-4 2 5z" fill="currentColor"/></svg></button>
+        <div class="tile card"><h4>Live</h4>
+          <div class="r"><span>Motor</span><span class="v dot" id="motor_live">?</span></div>
+          <div class="r"><span>Spindle lock</span><span class="v dot" id="spindle_live">?</span></div></div>
+        <div class="tile card"><h4>Test</h4>
+          <div class="r"><span>Spindle lock</span><button class="sb a" id="spindle_btn">Open</button></div></div>
+        <div class="tile card"><h4>Timings · local.yaml</h4><div id="timings"></div></div>
+      </div>
+    </section>
+
+    <section data-screen="S4">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">LEDs</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="tile card">
+          <div class="r"><span class="lab"><span class="m" id="wled_mark"></span>WLED</span><span class="v" id="wled_ip"></span></div>
+          <div class="r"><span>Brightness</span><span class="v dot" id="brightness_v"></span></div>
+          <input type="range" class="slider" id="brightness" min="0" max="100" aria-label="Brightness">
+          <div class="ticks"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="tile card"><h4>Test</h4><div class="grid3" style="padding:10px 0 16px"><button class="sb" id="led_off">Off</button><button class="sb" id="led_white">White</button><button class="sb" id="led_amber">Amber</button></div></div>
+        <div class="tile card"><h4>Light a shelf</h4><div class="lvl5" id="shelves" style="padding:10px 0 16px"></div></div>
+        <div class="tile card"><h4>Zones · local.yaml</h4><div id="zones"></div></div>
+      </div>
+    </section>
+
+    <section data-screen="S5">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">Audio</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="tile card">
+          <div class="r"><span>Volume</span><span class="v dot" id="volume_v"></span></div>
+          <input type="range" class="slider" id="volume" min="0" max="100" aria-label="Volume">
+          <div class="ticks"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="tile card" id="sound_rows"><h4>Play</h4>
+          <div class="r"><span class="lab"><span class="m"></span>Success <span class="v">success.wav</span></span><button class="sb a" data-sound="success">Play</button></div>
+          <div class="r"><span class="lab"><span class="m"></span>Alarm <span class="v">alarm.wav</span></span><button class="sb a" data-sound="alarm">Play</button></div>
+          <div class="r"><span class="lab"><span class="m"></span>Error <span class="v">error.wav</span></span><button class="sb a" data-sound="error">Play</button></div></div>
+        <button class="tile btn bottom" id="audio_stop">Stop</button>
+      </div>
+    </section>
+
+    <section data-screen="S6">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">Network</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="tile card"><h4>This machine</h4><div class="r"><span>IP</span><span class="v" id="net_ip"></span></div><div class="r"><span>Hostname</span><span class="v" id="net_host"></span></div></div>
+        <div class="tile card"><h4>Devices</h4>
+          <div class="r"><span class="lab"><span class="m" id="dev_levels_mark"></span>Door relays</span><span class="v" id="dev_levels_host"></span></div>
+          <div class="r"><span class="lab"><span class="m" id="dev_core_mark"></span>Core relays</span><span class="v" id="dev_core_host"></span></div>
+          <div class="r"><span class="lab"><span class="m" id="dev_wled_mark"></span>WLED</span><span class="v" id="dev_wled_host"></span></div></div>
+        <div class="tile card"><h4>Purchase server</h4>
+          <div class="r"><span class="lab"><span class="m" id="srv_mark"></span><span class="v" id="srv_url"></span></span><span class="v dot" id="srv_state">?</span></div>
+          <div class="r"><span>Last OK</span><span class="v" id="srv_last_ok">—</span></div>
+          <div class="r"><span>Last error</span><span class="v" id="srv_last_error">—</span></div>
+          <div class="r"><span>Queued reports</span><span class="v dot" id="srv_queued">0</span></div></div>
+        <div class="cap center result" id="server_result"></div>
+        <button class="tile btn bottom" id="test_server">Test server</button>
+      </div>
+    </section>
+
+    <section data-screen="S7">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">QR codes</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="lvl5" id="qr_picker"></div>
+        <div class="tile qrwrap">
+          <div class="cap" style="align-self:flex-start" id="qr_caption"></div>
+          <div class="qr"><img id="qr_img" alt="QR code" src=""></div>
+          <div class="note" id="qr_data"></div>
+        </div>
+      </div>
+    </section>
+
+    <section data-screen="S8">
+    <div class="top"><button class="back" data-nav="S1">‹ Back</button><div class="title">Events</div><div class="spacer"></div></div>
+      <div class="body">
+        <div class="tiles">
+          <div class="tile stat"><b id="stat_vends_today">–</b><span class="cap">Vends today</span></div>
+          <div class="tile stat"><b id="stat_vends_total">–</b><span class="cap">Vends total</span></div>
+          <div class="tile stat"><b id="stat_alarms">–</b><span class="cap">Alarms today</span></div>
+          <div class="tile stat"><b id="stat_faults">–</b><span class="cap">Faults today</span></div>
+        </div>
+        <div class="chips" id="chips"><button class="chip on" data-filter="all">All</button><button class="chip" data-filter="vends">Vends</button><button class="chip" data-filter="hardware">Hardware</button><button class="chip" data-filter="network">Network</button></div>
+        <div class="tile card" id="event_rows" style="padding-block:6px"></div>
+        <button class="tile btn bottom" id="load_more">Load more</button>
+      </div>
+    </section>
+
+    <div class="confirm" id="confirm" hidden>
+      <div class="tile">
+        <p id="confirm_text"></p>
+        <div class="row2"><button class="tile btn" id="confirm_no">Cancel</button><button class="tile btn p" id="confirm_yes">Switch on</button></div>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script src="/static/settings.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
