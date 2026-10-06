@@ -1,6 +1,7 @@
 """LED patterns, the ArtNet sender against the fake receiver, the mock, runtime.json."""
 
 import asyncio
+import logging
 import math
 
 import pytest
@@ -13,6 +14,7 @@ from monitoni.leds import (
     ArtnetLeds,
     Layout,
     MockLeds,
+    artdmx_packet,
     mix,
     scale,
 )
@@ -82,7 +84,8 @@ def test_breathing_is_smooth_and_never_dark(layout):
 
 def test_mock_records_calls_and_renders_frames(make_config):
     leds = MockLeds(make_config())
-    assert leds.status() == {"reachable": True, "pattern": "off", "level": None, "brightness": 0.6}
+    assert leds.status() == {"enabled": True, "reachable": True, "pattern": "off", "level": None,
+                             "brightness": 0.6}
     leds.set_pattern("selected", 3)
     leds.fill((10, 20, 30))
     leds.light_level(2, (1, 2, 3))
@@ -117,11 +120,12 @@ async def fake_artnet():
 async def make_leds(make_config, fake_artnet):
     started = []
 
-    async def _make(pixel_count: int = 120, health_poll_s: float = 10.0) -> ArtnetLeds:
+    async def _make(pixel_count: int = 120, health_poll_s: float = 10.0,
+                    universe: int = 0) -> ArtnetLeds:
         config = make_config()
         wled = config.hardware.wled
         wled.ip_address, wled.port, wled.pixel_count = "127.0.0.1", fake_artnet.port, pixel_count
-        wled.health_poll_s = health_poll_s
+        wled.health_poll_s, wled.universe = health_poll_s, universe
         leds = ArtnetLeds(config, health_url=f"http://127.0.0.1:{fake_artnet.port}/json/info")
         await leds.start()
         started.append(leds)
@@ -246,3 +250,79 @@ async def test_unreachable_controller_is_status_only(make_config):
         assert leds.frames_sent > 2 and leds.status()["pattern"] == "alarm"  # still sending
     finally:
         await leds.stop()
+
+
+# -- the packets themselves ----------------------------------------------------------------
+
+def test_artdmx_packet_matches_the_spec():
+    data = bytes(range(256)) + bytes(134)  # 130 pixels = 390 channels
+    packet = artdmx_packet(1, 7, data)
+    assert len(packet) == 18 + 390
+    assert packet[:8] == b"Art-Net\0"
+    assert packet[8:10] == b"\x00\x50"  # OpDmx 0x5000, low byte first
+    assert packet[10:12] == b"\x00\x0e"  # protocol version 14, high byte first
+    assert packet[12] == 7 and packet[13] == 0  # sequence, physical
+    assert packet[14:16] == b"\x01\x00"  # universe 1, low byte first
+    assert packet[16:18] == b"\x01\x86"  # length 390, high byte first
+    assert packet[18:] == data
+    odd = artdmx_packet(0x7FFF, 255, b"\x01\x02\x03")
+    assert odd[14:16] == b"\xff\x7f" and odd[16:18] == b"\x00\x04"  # 15-bit universe, even length
+    assert odd[18:] == b"\x01\x02\x03\x00"
+    for sequence, channels in ((0, 6), (256, 6), (1, 0), (1, 513)):
+        with pytest.raises(ValueError):
+            artdmx_packet(0, sequence, bytes(channels))
+
+
+async def test_universe_1_with_130_pixels_on_the_wire(make_leds, fake_artnet):
+    leds = await make_leds(pixel_count=130, universe=1)
+    leds.set_brightness(1.0)
+    leds.fill((9, 8, 7))
+    await wait_until(lambda: fake_artnet.frames.get(1, b"")[-3:] == bytes((9, 8, 7)), "the frame")
+    assert list(fake_artnet.frames) == [1] and len(fake_artnet.frames[1]) == 390
+    assert fake_artnet.frames[1] == bytes((9, 8, 7)) * 130
+
+
+class FailingSocket:
+    """Stands in for the UDP socket while the network is down."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    def sendto(self, packet, target):
+        self.attempts += 1
+        raise OSError(51, "Network is unreachable")
+
+    def close(self) -> None:
+        pass
+
+
+async def test_send_failures_are_logged_once_each_way(make_leds, fake_artnet, monkeypatch, caplog):
+    leds = await make_leds()
+    leds.set_pattern("idle")
+    await wait_until(lambda: fake_artnet.frames_received >= 2, "frames before the outage")
+    real_socket, failing = leds._socket, FailingSocket()
+    with caplog.at_level(logging.INFO, logger="monitoni.leds"):
+        monkeypatch.setattr(leds, "_socket", failing)
+        leds.set_pattern("alarm")  # 30 frames a second, every one of them failing
+        await asyncio.sleep(0.3)
+        assert failing.attempts >= 6
+        monkeypatch.setattr(leds, "_socket", real_socket)
+        await wait_until(lambda: fake_artnet.frames_received >= 4, "frames after the outage")
+    messages = [r.getMessage() for r in caplog.records if "ArtNet to" in r.getMessage()]
+    assert len(messages) == 2
+    assert messages[0].endswith("failing: [Errno 51] Network is unreachable")
+    assert messages[1].endswith("works again")
+    assert leds.status()["pattern"] == "alarm"  # nothing else changed
+
+
+async def test_a_clean_stop_sends_one_dark_frame(make_leds, fake_artnet):
+    leds = await make_leds()
+    leds.set_pattern("idle")
+    await wait_until(lambda: fake_artnet.zone_colours() == [scale(IDLE, 0.6)] * 10, "idle")
+    sent = fake_artnet.frames_received
+    await leds.stop()
+    await wait_until(lambda: fake_artnet.frames_received == sent + 1, "the dark frame")
+    assert fake_artnet.zone_colours() == [OFF] * 10
+    await asyncio.sleep(0.1)
+    assert fake_artnet.frames_received == sent + 1  # and nothing after it
+    await leds.stop()  # idempotent

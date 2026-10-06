@@ -9,9 +9,9 @@ to watch the colours on a laptop:
 prints one line whenever a zone's colour changes, e.g. `14:31:05 zone 3 -> (233,162,59)`.
 Animated patterns (breathing, flashing, the fade) print a line per frame.
 
-ArtDMX packet (what stupidArtnet sends): "Art-Net\\0", opcode 0x5000 low byte first, protocol
-version 14 high byte first, sequence, physical, universe low byte first, length high byte first,
-then `length` channel bytes: three per pixel, R G B.
+ArtDMX packet, as monitoni.leds.artdmx_packet builds it: "Art-Net\\0", opcode 0x5000 low byte
+first, protocol version 14 high byte first, sequence, physical, universe low byte first, length
+high byte first, then `length` channel bytes: three per pixel, R G B.
 """
 
 import argparse

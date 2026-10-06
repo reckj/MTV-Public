@@ -4,24 +4,26 @@ Patterns are a table: name -> how to render a frame at time t for a level. A fra
 triple per pixel, before `led.brightness` is applied. The zones (one pixel range per level) and
 the colours come from the config; the mapping state -> pattern lives in feedback.py.
 
-ArtnetLeds sends frames with stupidArtnet, 170 pixels per universe starting at
-hardware.wled.universe. It renders at `fps` only while the pattern animates (breathing, flash,
-fade); a steady pattern is sent once on change and then once a second as a keepalive, because
-WLED falls back to its own preset after a few seconds without ArtNet. ArtNet is UDP and says
-nothing back, so reachability is a GET /json/info every health_poll_s; it is status only.
+ArtnetLeds builds the ArtDMX packets itself (`artdmx_packet`) and sends them from one UDP
+socket, 170 pixels per universe starting at hardware.wled.universe. It renders at `fps` only
+while the pattern animates (breathing, flash, fade); a steady pattern is sent once on change and
+then once a second as a keepalive, because WLED falls back to its own preset after a few seconds
+without ArtNet. A clean stop sends one dark frame. ArtNet is UDP and says nothing back, so
+reachability is a GET /json/info every health_poll_s; it is status only, as is a failing send
+(logged once when it starts failing and once when it works again, never per frame).
 """
 
 import asyncio
 import contextlib
 import logging
 import math
+import socket
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
-from stupidArtnet import StupidArtnet
 
 from monitoni.config import Config
 
@@ -32,11 +34,29 @@ Frame = list[Rgb]
 
 OFF: Rgb = (0, 0, 0)
 PIXELS_PER_UNIVERSE = 170  # 510 of the 512 DMX channels
+OPCODE_DMX = 0x5000
+PROTOCOL_VERSION = 14
 KEEPALIVE_S = 1.0  # resend a steady frame this often (WLED's realtime timeout is 2.5 s)
 BREATH_PERIOD_S = 1.5
 BREATH_FLOOR = 0.2  # the breathing zone never goes darker than this fraction of its colour
 FLASH_HZ = 2.0
 THANKS_S = 1.0  # the fade from `open` to `idle`
+
+
+def artdmx_packet(universe: int, sequence: int, data: bytes) -> bytes:
+    """One ArtDMX packet: the 18-byte header, then `data` padded to an even length.
+
+    "Art-Net\\0", OpDmx 0x5000 low byte first, protocol version 14 high byte first, sequence
+    (1..255; 0 would mean "no sequence"), physical 0, the 15-bit universe low byte first, the
+    data length high byte first (even, 2..512), the channel data.
+    """
+    if len(data) % 2:
+        data += b"\0"
+    if not 1 <= sequence <= 255 or not 2 <= len(data) <= 512:
+        raise ValueError(f"ArtDMX: sequence {sequence}, {len(data)} channels")
+    return (b"Art-Net\0" + OPCODE_DMX.to_bytes(2, "little") + PROTOCOL_VERSION.to_bytes(2, "big")
+            + bytes((sequence, 0)) + (universe & 0x7FFF).to_bytes(2, "little")
+            + len(data).to_bytes(2, "big") + data)
 
 
 def scale(rgb: Rgb, factor: float) -> Rgb:
@@ -158,7 +178,7 @@ class Leds(Protocol):
     def off(self) -> None: ...
 
     def status(self) -> dict:
-        """{reachable, pattern, level, brightness}"""
+        """{enabled, reachable, pattern, level, brightness}"""
         ...
 
 
@@ -187,6 +207,7 @@ class _Base:
     def __init__(self, config: Config) -> None:
         self.layout = Layout(config)
         self.brightness = config.led.brightness
+        self.enabled = config.hardware.wled.enabled  # the config flag, for the settings screens
         self.on_reachability: Callable[[bool], None] = lambda ok: None
         self.reachable: bool | None = None
         self._showing = _showing(self.layout, "off", None)
@@ -214,8 +235,9 @@ class _Base:
         self._changed()
 
     def status(self) -> dict:
-        return {"reachable": self.reachable, "pattern": self._showing.name,
-                "level": self._showing.level, "brightness": self.brightness}
+        return {"enabled": self.enabled, "reachable": self.reachable,
+                "pattern": self._showing.name, "level": self._showing.level,
+                "brightness": self.brightness}
 
     def _show(self, showing: _Showing) -> None:
         self._showing = showing
@@ -235,18 +257,17 @@ class ArtnetLeds(_Base):
         super().__init__(config)
         self.config = config.hardware.wled
         self.health_url = health_url or f"http://{self.config.ip_address}/json/info"
-        self.frames_sent = 0
-        self._senders: list[StupidArtnet] = []
+        self.frames_sent = 0  # frames that left the socket
+        self._universes = math.ceil(self.layout.pixel_count / PIXELS_PER_UNIVERSE)
+        self._socket: socket.socket | None = None
+        self._sequence = 0
+        self._send_failing = False
         self._wake = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
-        universes = math.ceil(self.layout.pixel_count / PIXELS_PER_UNIVERSE)
-        for u in range(universes):
-            pixels = min(PIXELS_PER_UNIVERSE, self.layout.pixel_count - u * PIXELS_PER_UNIVERSE)
-            self._senders.append(StupidArtnet(self.config.ip_address, self.config.universe + u,
-                                              pixels * 3, self.config.fps, port=self.config.port))
-        first, last = self.config.universe, self.config.universe + universes - 1
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        first, last = self.config.universe, self.config.universe + self._universes - 1
         log.info("ArtNet to %s:%d, universe%s, %d pixels", self.config.ip_address,
                  self.config.port, f" {first}" if first == last else f"s {first}-{last}",
                  self.layout.pixel_count)
@@ -260,9 +281,10 @@ class ArtnetLeds(_Base):
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        senders, self._senders = self._senders, []
-        for sender in senders:
-            sender.close()
+        sock, self._socket = self._socket, None
+        if sock is not None:
+            self._send(self.layout.off(), sock)  # a clean stop leaves the strip dark
+            sock.close()
 
     def set_pattern(self, pattern: str, level: int | None = None) -> None:
         current = self._showing
@@ -276,17 +298,29 @@ class ArtnetLeds(_Base):
 
     # -- sending -----------------------------------------------------------------
 
-    def _send(self, frame: Frame) -> None:
-        data = bytearray()
-        for rgb in Layout.scaled(frame, self.brightness):
-            data += bytes(rgb)
+    def _send(self, frame: Frame, sock: socket.socket | None = None) -> None:
+        """One frame as one ArtDMX packet per universe. A failing network is logged on the first
+        failure and on the first success after it, never per frame; frames are simply lost."""
+        sock = sock or self._socket
+        if sock is None:
+            return
+        data = bytes(channel for rgb in Layout.scaled(frame, self.brightness) for channel in rgb)
+        self._sequence = self._sequence % 255 + 1  # 1..255, never 0
         step = PIXELS_PER_UNIVERSE * 3
-        for u, sender in enumerate(self._senders):
-            chunk = data[u * step:(u + 1) * step]
-            buffer = bytearray(sender.packet_size)  # stupidArtnet pads odd sizes to even
-            buffer[:len(chunk)] = chunk
-            sender.set(buffer)
-            sender.show()
+        target = (self.config.ip_address, self.config.port)
+        try:
+            for u in range(self._universes):
+                packet = artdmx_packet(self.config.universe + u, self._sequence,
+                                       data[u * step:(u + 1) * step])
+                sock.sendto(packet, target)
+        except OSError as exc:
+            if not self._send_failing:
+                self._send_failing = True
+                log.warning("ArtNet to %s:%d failing: %s", *target, exc)
+            return
+        if self._send_failing:
+            self._send_failing = False
+            log.info("ArtNet to %s:%d works again", *target)
         self.frames_sent += 1
 
     async def _frame_loop(self) -> None:
