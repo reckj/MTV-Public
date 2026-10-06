@@ -11,10 +11,10 @@ from tests.conftest import http_purchase
 from tests.helpers import command, events, status, wait_for_state, wait_until
 
 
-def make_real_daemon(config, purchase_fake=None) -> Daemon:
+def make_real_daemon(config, purchase_fake=None, leds=None) -> Daemon:
     purchase = (MockPurchaseServer() if purchase_fake is None
                 else http_purchase(config, purchase_fake))
-    daemon = Daemon(config, RealHardware(config), purchase)
+    daemon = Daemon(config, RealHardware(config), purchase, leds=leds)
     daemon.recovery_check_s = 0.02
     daemon.recovery_dwell_s = 0.05
     return daemon
@@ -230,3 +230,58 @@ async def test_wrong_token_is_unreachable_and_unlocks_nothing(client, real_confi
         assert all(not r["token_ok"] for r in purchase_fake.requests)
     finally:
         await daemon.stop()
+
+
+async def test_full_vend_lights_the_strip_through_the_fake_receiver(client, real_config, fakes):
+    from monitoni.leds import ArtnetLeds, scale
+    from tests.fake_artnet import FakeArtnet, parse_zones
+
+    core, levels = fakes
+    strip = FakeArtnet(parse_zones("10x12"))
+    await strip.start()
+    seen: list[list] = []  # the zone colours after every frame
+    strip.on_frame = lambda: seen.append(strip.zone_colours())
+    wled = real_config.hardware.wled
+    wled.ip_address, wled.port, wled.pixel_count = "127.0.0.1", strip.port, 120
+    wled.health_poll_s = 0.05
+    real_config.vending.timings.door_alarm_delay_s = 0.3
+    daemon = make_real_daemon(real_config, leds=ArtnetLeds(
+        real_config, health_url=f"http://127.0.0.1:{strip.port}/json/info"))
+    await daemon.start()
+    try:
+        idle, amber, cream, red = (scale(c, 0.6) for c in
+                                   ((60, 40, 20), (233, 162, 59), (239, 228, 210), (239, 90, 106)))
+        await wait_until(lambda: strip.zone_colours() == [idle] * 10, "idle on the strip")
+        body = await status(client, daemon)
+        assert body["leds"]["reachable"] is True and body["audio"]["available"] is True
+
+        await to_door_unlocked(client, daemon, level=3)
+        await wait_until(lambda: strip.zone_colour(3) != amber and strip.zone_colour(3) != idle,
+                         "breathing")
+        breathing = set()
+        for _ in range(30):
+            breathing.add(strip.zone_colour(3))
+            await asyncio.sleep(0.02)
+        assert len(breathing) > 5 and all(c[1:] != (0, 0) for c in breathing)  # amber, varying
+        assert strip.zone_colours()[:2] == [(0, 0, 0)] * 2  # the other zones are off
+
+        core.inputs[0] = False  # door opened
+        await wait_for_state(client, daemon, "door_opened")
+        await wait_until(lambda: strip.zone_colour(3) == cream, "open colour")
+        assert strip.zone_colours() == [(0, 0, 0)] * 2 + [cream] + [(0, 0, 0)] * 7
+
+        await wait_for_state(client, daemon, "door_alarm")
+        flashing = set()
+        for _ in range(30):
+            flashing.add(tuple(strip.zone_colours()))
+            await asyncio.sleep(0.02)
+        assert flashing == {tuple([red] * 10), tuple([(0, 0, 0)] * 10)}  # all zones, on and off
+
+        core.inputs[0] = True
+        await wait_for_state(client, daemon, "idle")
+        await wait_until(lambda: strip.zone_colours() == [idle] * 10, "back to idle", timeout=3)
+        selected_frames = [z for z in seen if z[2] == amber and z[0] == idle]
+        assert selected_frames, "the selected pattern was shown for zone 3"
+    finally:
+        await daemon.stop()
+        await strip.stop()

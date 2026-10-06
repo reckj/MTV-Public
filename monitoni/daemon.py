@@ -1,4 +1,5 @@
-"""The daemon: owns config, hardware, purchase server, event log, flow, motor and the web server."""
+"""The daemon: owns config, hardware, purchase server, event log, flow, motor, LEDs, audio and
+the web server."""
 
 import asyncio
 import contextlib
@@ -8,10 +9,13 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from monitoni.audio import Audio, MockAudio
 from monitoni.config import Config
 from monitoni.eventlog import EventLog
+from monitoni.feedback import Feedback
 from monitoni.flow import REASON_HARDWARE, Event, Flow, IllegalTransition, State
 from monitoni.hardware.base import DoorEvent, Hardware, HardwareError, HardwareFault
+from monitoni.leds import Leds, MockLeds
 from monitoni.motor import Motor
 from monitoni.outbox import Outbox
 from monitoni.purchase import MockPurchaseServer, PurchaseServer
@@ -25,10 +29,13 @@ class Daemon:
     recovery_dwell_s = 10.0  # the hardware must be healthy this long, without a break, first
     recovery_holdoff_s = 30.0  # pause after a recovery attempt that ended in out_of_order again
 
-    def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer) -> None:
+    def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer,
+                 leds: Leds | None = None, audio: Audio | None = None) -> None:
         self.config = config
         self.hardware = hardware
         self.purchase = purchase
+        self.leds = leds or MockLeds(config)
+        self.audio = audio or MockAudio(config.hardware.audio.volume)
         self.events = EventLog(config.database.path)
         self.changed = asyncio.Event()  # set by the flow on every state change
         self.outbox = Outbox(config.database.path, purchase, self.events,
@@ -36,7 +43,9 @@ class Daemon:
                              lambda: self.flow.state.value, on_change=self.changed.set)
         self.flow = Flow(config, hardware, purchase, self.outbox, self.events,
                          on_change=self._flow_changed)
+        self.feedback = Feedback(self.flow, self.leds, self.audio)
         purchase.on_reachability = self._purchase_reachability
+        self.leds.on_reachability = self._wled_reachability
         self._row_tasks: set[asyncio.Task] = set()
         self.motor = Motor(config.hardware.motor, hardware, self.events, hardware.events,
                            lambda: self.flow.state.value, on_change=self.changed.set)
@@ -52,6 +61,10 @@ class Daemon:
         try:
             await self.events.start()
             self._stops.append(self.events.stop)
+            await self.leds.start()
+            self._stops.append(self.leds.stop)
+            await self.audio.start()
+            self._stops.append(self.audio.stop)
             await self.purchase.start()
             self._stops.append(self.purchase.stop)
             await self.outbox.start()
@@ -120,8 +133,14 @@ class Daemon:
 
     def _purchase_reachability(self, ok: bool) -> None:
         """One `network` row per change of reachability, and a status push."""
-        details = {"purchase_server": "reachable" if ok else "unreachable",
-                   "error": self.purchase.status().get("last_error")}
+        self._network_row({"purchase_server": "reachable" if ok else "unreachable",
+                           "error": self.purchase.status().get("last_error")})
+
+    def _wled_reachability(self, ok: bool) -> None:
+        """The LED controller answered (or stopped answering) its health poll. Status only."""
+        self._network_row({"component": "wled", "reachable": ok})
+
+    def _network_row(self, details: dict) -> None:
         task = asyncio.get_running_loop().create_task(
             self.events.write("network", self.flow.state.value, details=details),
             name="network-row")
@@ -206,6 +225,8 @@ class Daemon:
             "maintenance_message": self.config.system.maintenance_message,
             "hardware": hardware,
             "motor": self.motor.status(),
+            "leds": self.leds.status(),
+            "audio": self.audio.status(),
             "purchase_server": {**self.purchase.status(),
                                 "outbox_pending": self.outbox.pending_count},
         }

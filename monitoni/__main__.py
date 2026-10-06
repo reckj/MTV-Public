@@ -1,4 +1,5 @@
-"""Entry point: python -m monitoni [--mock] [--mock-purchase] [--config-dir DIR] [--log-level L]."""
+"""Entry point: python -m monitoni [--mock] [--mock-purchase] [--fake-artnet HOST:PORT]
+[--config-dir DIR] [--log-level L]."""
 
 import argparse
 import asyncio
@@ -7,17 +8,20 @@ import signal
 import sys
 from pathlib import Path
 
-from monitoni.config import Config, ConfigError, load_config
+from monitoni.audio import Audio, MockAudio, PygameAudio
+from monitoni.config import Config, ConfigError, apply_runtime, load_config
 from monitoni.daemon import Daemon
 from monitoni.hardware.base import Hardware
 from monitoni.hardware.mock import MockHardware
 from monitoni.hardware.real import RealHardware
+from monitoni.leds import ArtnetLeds, Leds, MockLeds
 from monitoni.purchase import HttpPurchaseServer, MockPurchaseServer, PurchaseServer
 
 log = logging.getLogger("monitoni")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_DIR = REPO_ROOT / "config"
+RUNTIME_PATH = REPO_ROOT / "data" / "runtime.json"  # written by the settings area, later
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -26,6 +30,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help="use mock hardware regardless of hardware.mode in config")
     parser.add_argument("--mock-purchase", action="store_true",
                         help="simulate payments instead of talking to purchase_server.base_url")
+    parser.add_argument("--fake-artnet", metavar="HOST:PORT",
+                        help="real feedback with mock hardware: ArtNet to this fake receiver "
+                             "(python -m tests.fake_artnet) and sounds on this computer")
     parser.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
                         help="directory holding default.yaml and local.yaml")
     parser.add_argument("--log-level", default="INFO",
@@ -53,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     # relative data paths are taken from the repo root, not the working directory
     config.database.path = REPO_ROOT / config.database.path
     config.qr.dir = REPO_ROOT / config.qr.dir
+    config.hardware.audio.dir = REPO_ROOT / config.hardware.audio.dir
+    apply_runtime(config, RUNTIME_PATH)
 
     if args.mock:
         config.hardware.mode = "mock"
@@ -76,17 +85,40 @@ def main(argv: list[str] | None = None) -> int:
                       "(or run with --mock-purchase to simulate payments)", local_path)
             return 1
         purchase = HttpPurchaseServer(config.purchase_server)
-    return asyncio.run(run(config, hardware, purchase))
+
+    leds: Leds
+    audio: Audio
+    if args.fake_artnet:
+        host, _, port = args.fake_artnet.rpartition(":")
+        if not host or not port.isdigit():
+            log.error("--fake-artnet needs HOST:PORT, got %r", args.fake_artnet)
+            return 1
+        config.hardware.wled.ip_address, config.hardware.wled.port = host, int(port)
+        leds = ArtnetLeds(config, health_url=f"http://{host}:{port}/json/info")
+        audio = PygameAudio(config.hardware.audio)
+    else:
+        if args.mock or not config.hardware.wled.enabled:
+            log.info("LEDs: %s", "mock" if args.mock else "disabled in config")
+            leds = MockLeds(config)
+        else:
+            leds = ArtnetLeds(config)
+        if args.mock or not config.hardware.audio.enabled:
+            log.info("audio: %s", "mock" if args.mock else "disabled in config")
+            audio = MockAudio(config.hardware.audio.volume)
+        else:
+            audio = PygameAudio(config.hardware.audio)
+    return asyncio.run(run(config, hardware, purchase, leds, audio))
 
 
-async def run(config: Config, hardware: Hardware, purchase: PurchaseServer) -> int:
+async def run(config: Config, hardware: Hardware, purchase: PurchaseServer,
+              leds: Leds | None = None, audio: Audio | None = None) -> int:
     """Start the daemon, wait for SIGINT/SIGTERM, stop it cleanly."""
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    daemon = Daemon(config, hardware, purchase)
+    daemon = Daemon(config, hardware, purchase, leds, audio)
     try:
         await daemon.start()
         await stop.wait()

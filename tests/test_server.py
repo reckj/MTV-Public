@@ -15,7 +15,7 @@ from tests.helpers import command, events, status, wait_for_state, wait_until
 
 STATUS_KEYS = {"machine_id", "hardware_mode", "purchase_mode", "uptime_s", "state", "reason",
                "selected_level", "purchase_id", "levels", "doors", "countdown_s", "qr_url",
-               "maintenance_message", "hardware", "motor", "purchase_server"}
+               "maintenance_message", "hardware", "motor", "purchase_server", "leds", "audio"}
 
 
 class FailingMotor(MockHardware):
@@ -30,13 +30,15 @@ async def make_daemon(make_config):
     started = []
 
     async def _make(mode: str = "mock", hardware_cls=MockHardware, maintenance: bool = False,
-                    dwell: float = 0.05, purchase_fake=None, **timings: float) -> Daemon:
+                    dwell: float = 0.05, purchase_fake=None, leds=None,
+                    **timings: float) -> Daemon:
         config = make_config(**timings)
         config.hardware.mode = mode
         config.system.maintenance_mode = maintenance
         purchase = (MockPurchaseServer() if purchase_fake is None
                     else http_purchase(config, purchase_fake))
-        daemon = Daemon(config, hardware_cls(config.vending.levels), purchase)
+        daemon = Daemon(config, hardware_cls(config.vending.levels), purchase,
+                        leds=None if leds is None else leds(config))
         daemon.recovery_check_s = 0.02
         daemon.recovery_dwell_s = dwell
         await daemon.start()
@@ -65,6 +67,8 @@ async def test_status_endpoint(client, daemon):
     assert set(body["doors"].values()) == {"locked"}
     assert body["qr_url"] is None and body["selected_level"] is None
     assert body["countdown_s"] is not None  # idle has a sleep timeout
+    assert body["leds"] == {"reachable": True, "pattern": "idle", "level": None, "brightness": 0.6}
+    assert body["audio"] == {"available": True, "volume": 0.7, "playing": None}
 
 
 async def test_index_serves_html(client, daemon):
@@ -395,3 +399,64 @@ async def test_unreachable_purchase_server_keeps_polling_and_logs_once(client, m
     rows = [r["details"]["purchase_server"] for r in reversed(await events(client, daemon))
             if r["kind"] == "network"]
     assert rows == ["unreachable", "reachable"]
+
+
+# -- LEDs and audio in the status ----------------------------------------------------------
+
+async def test_feedback_follows_a_vend_in_the_status(client, make_daemon):
+    daemon = await make_daemon(door_alarm_delay_s=0.05)
+    await command(client, daemon, command="select_level", level=3)
+    body = await status(client, daemon)
+    assert (body["leds"]["pattern"], body["leds"]["level"]) == ("selected", 3)
+    await command(client, daemon, command="simulate_payment")
+    body = await wait_for_state(client, daemon, "door_unlocked")
+    assert (body["leds"]["pattern"], body["leds"]["level"]) == ("unlocked", 3)
+    assert body["audio"]["playing"] == "success"
+    await command(client, daemon, command="simulate_door", open=True)
+    body = await wait_for_state(client, daemon, "door_alarm")
+    assert body["leds"]["pattern"] == "alarm" and body["audio"]["playing"] == "alarm"
+    await command(client, daemon, command="simulate_door", open=False)
+    body = await wait_for_state(client, daemon, "idle")
+    assert body["leds"]["pattern"] == "idle" and body["audio"]["playing"] is None
+
+
+async def test_wled_reachability_is_a_network_row_and_status_only(client, make_daemon,
+                                                                   make_config):
+    from monitoni.leds import ArtnetLeds
+    from tests.fake_artnet import FakeArtnet, parse_zones
+
+    fake = FakeArtnet(parse_zones("10x12"))
+    await fake.start()
+    try:
+        def artnet_leds(config):
+            config.hardware.wled.ip_address, config.hardware.wled.port = "127.0.0.1", fake.port
+            config.hardware.wled.pixel_count = 120
+            config.hardware.wled.health_poll_s = 0.05
+            return ArtnetLeds(config, health_url=f"http://127.0.0.1:{fake.port}/json/info")
+
+        daemon = await make_daemon(leds=artnet_leds)
+        body = await wait_until_reachable(client, daemon, True)
+        assert body["state"] == "idle" and body["leds"]["pattern"] == "idle"
+        await wait_until(lambda: fake.frames_received >= 1, "a frame")
+        fake.http_up = False
+        body = await wait_until_reachable(client, daemon, False)
+        assert body["state"] == "idle" and body["reason"] is None  # never a fault
+        fake.http_up = True
+        await wait_until_reachable(client, daemon, True)
+        rows = [r["details"] for r in reversed(await events(client, daemon))
+                if r["kind"] == "network"]
+        assert rows == [{"component": "wled", "reachable": True},
+                        {"component": "wled", "reachable": False},
+                        {"component": "wled", "reachable": True}]
+    finally:
+        await fake.stop()
+
+
+async def wait_until_reachable(client, daemon, value):
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while True:
+        body = await status(client, daemon)
+        if body["leds"]["reachable"] is value:
+            return body
+        assert asyncio.get_running_loop().time() < deadline, f"leds.reachable never {value}"
+        await asyncio.sleep(0.01)

@@ -56,6 +56,10 @@ function render(status) {
     $("doors").textContent = Object.entries(status.doors)
       .map(([n, s]) => `${n}:${s === "locked" ? "🔒" : s === "unlocked" ? "🔓" : "?"}`).join(" ");
     $("motor").textContent = JSON.stringify(status.motor);
+    const leds = status.leds;
+    const reach = leds.reachable === null ? "unknown" : leds.reachable ? "reachable" : "unreachable";
+    $("leds").textContent = `${leds.pattern} · level ${leds.level ?? "–"} · ${reach}`;
+    $("audio").textContent = (status.audio.playing ?? "—") + (status.audio.available ? "" : " (unavailable)");
     $("outbox").textContent = `${status.purchase_server.outbox_pending} pending`;
     $("purchase_server").textContent = JSON.stringify(status.purchase_server);
     $("hardware").textContent = JSON.stringify(status.hardware, null, 1);
