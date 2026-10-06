@@ -261,6 +261,7 @@ class Daemon:
         motor_cfg = self.config.hardware.motor
         return {
             "name": self.config.system.name,
+            "location": self.config.system.location,
             "machine_id": self.config.system.machine_id,
             "app_version": __version__,
             "hostname": self.hostname,

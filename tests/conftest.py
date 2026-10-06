@@ -29,6 +29,7 @@ def make_config(tmp_path):
         for key in ("sleep_timeout_s", "purchase_timeout_s",
                     "door_unlock_timeout_s", "door_alarm_delay_s", "settings_timeout_s"):
             setattr(config.vending.timings, key, timings.get(key, LONG))
+        config.vending.timings.thank_you_s = timings.get("thank_you_s", 0.0)  # no wait unless asked
         motor = config.hardware.motor
         motor.spindle_pre_delay_ms, motor.spin_after_release_ms = 10, 10
         motor.spindle_post_delay_ms = 5

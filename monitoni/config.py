@@ -25,7 +25,8 @@ class _Strict(BaseModel):
 
 
 class SystemConfig(_Strict):
-    name: str  # the customer screens' top bar: "Monitoni · ZHdK · Toni-Areal" style
+    name: str  # the customer screens' top bar: the wordmark
+    location: str  # the small line under it; "" shows none
     machine_id: str
 
 
@@ -124,6 +125,7 @@ class TimingsConfig(_Strict):
     door_alarm_delay_s: float
     relock_delay_s: float = Field(ge=0)  # the lock pin drops back this long after the door opened
     settings_timeout_s: float = Field(gt=0)  # settings area: auto-exit after this long untouched
+    thank_you_s: float = Field(ge=0)  # "Thank you" stays this long after the door closed
 
 
 class VendingConfig(_Strict):

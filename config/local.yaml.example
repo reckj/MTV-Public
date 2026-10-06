@@ -2,7 +2,8 @@
 # Only keys that differ from default.yaml are needed.
 
 system:
-  name: "Monitoni · ZHdK · Toni-Areal"   # top bar of the customer screens: wordmark · small line
+  name: "Monitoni"                # top bar of the customer screens: the wordmark
+  location: "ZHdK · Toni-Areal"   # the small line under it; "" shows none
   machine_id: "VM001"      # label for the log and the status page; not sent to the server
 
 hardware:

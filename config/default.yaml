@@ -3,9 +3,10 @@
 # top of this file key by key.
 
 system:
-  # What customers see in the top bar. The part before the first " · " is the wordmark, the
-  # rest the small line under it, e.g. "Monitoni · ZHdK · Toni-Areal"; set it in local.yaml.
+  # The customer screens' top bar: `name` is the wordmark, `location` the small line under
+  # it ("" shows none). Both are set in local.yaml.
   name: "Monitoni"
+  location: ""
   machine_id: "VM001"
 
 hardware:
@@ -106,6 +107,7 @@ vending:
     door_alarm_delay_s: 10
     relock_delay_s: 0.5        # the lock pin drops back this long after the door opened
     settings_timeout_s: 300    # the settings area closes after this long without a touch
+    thank_you_s: 2.0           # "Thank you" stays this long after the door closed
 
 # The Monitoni server. Every call is a GET with the header "Monitoni-Terminal: <token>".
 purchase_server:

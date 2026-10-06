@@ -112,10 +112,10 @@ Keys an installer must set in `config/local.yaml` so far (copy
 `config/local.yaml.example` as a start; every key not listed keeps its value
 from `config/default.yaml`):
 
-- `system.name` — what customers see in the top bar of the screen. The part
-  before the first ` · ` is the big wordmark, the rest the small line under
-  it: `name: "Monitoni · ZHdK · Toni-Areal"` shows "MONITONI" over
-  "ZHDK · TONI-AREAL". The default is `"Monitoni"` alone.
+- `system.name` and `system.location` — what customers see in the top bar of
+  the screen: `name` is the big wordmark (default `"Monitoni"`), `location`
+  the small line under it, for example `"ZHdK · Toni-Areal"`; the default
+  `""` shows no second line.
 - `system.machine_id` — a label for the log and the settings screens; the
   server identifies the machine by its token, not by this.
 - `hardware.relay_core.host`, `hardware.relay_levels.host`,
@@ -218,13 +218,14 @@ and exits.
 state of the machine, nothing is decided in the browser. In the order of a
 purchase:
 
-- *Select a shelf*: the machine's name (`system.name`) in the top bar, the
-  TURN button ("HOLD TO ROTATE": hold it to turn the carousel, the spindle lock
-  opens first, it stops on release and after `max_run_s` regardless), the
-  caption "Select a shelf · scan to pay" and ten tiles, shelf 1 ("top") to 10
-  ("bottom"). The small gear in the top right corner opens the settings. While
-  the purchase server cannot be reached, "Payment currently not possible"
-  stands in amber at the bottom; the shelves can still be tapped.
+- *Select a shelf*: the name and location (`system.name`, `system.location`)
+  in the top bar, the TURN button ("HOLD TO ROTATE": hold it to turn the
+  carousel, the spindle lock opens first, it stops on release and after
+  `max_run_s` regardless), the caption "Select a shelf · scan to pay" and ten
+  tiles, shelf 1 ("top") to 10 ("bottom"). The small gear in the top right
+  corner opens the settings. While the purchase server cannot be reached,
+  "Payment currently not possible" stands in amber at the bottom; the shelves
+  can still be tapped.
 - *Sleep*: after 60 s without a touch the screen goes black with a dim "Tap to
   wake"; any touch brings the shelves back.
 - *Scan to pay*: the chosen shelf number, the QR code on a cream plate ("Scan
@@ -243,8 +244,8 @@ purchase:
 - *Door forced*: the same red screen with "Door opened without a purchase —
   Close it. This event is recorded." when a door opens without a payment; it
   goes away when the door is closed.
-- *Thank you*: "Shelf N — Thank you" for the moment it takes the daemon to
-  report the vend, then back to the shelves.
+- *Thank you*: "Shelf N — Thank you" for two seconds
+  (`vending.timings.thank_you_s`), then back to the shelves.
 - *Out of order*: "Out of order" with the gear in the corner. The line
   "Technical problem — please try again later." is added for a hardware fault
   only; while the switch in the settings is on, or after a lost report, the

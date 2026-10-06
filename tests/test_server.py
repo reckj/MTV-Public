@@ -14,7 +14,7 @@ from monitoni.web.server import qr_data
 from tests.conftest import http_purchase
 from tests.helpers import command, events, status, wait_for_state, wait_until
 
-STATUS_KEYS = {"name", "machine_id", "app_version", "hostname", "ip", "hardware_mode",
+STATUS_KEYS = {"name", "location", "machine_id", "app_version", "hostname", "ip", "hardware_mode",
                "purchase_mode", "uptime_s", "state", "reason", "selected_level", "purchase_id",
                "levels", "doors", "countdown_s", "qr_url", "hardware", "motor", "purchase_server",
                "leds", "audio", "settings", "config_view"}
@@ -61,7 +61,8 @@ async def test_status_endpoint(client, daemon):
     body = await status(client, daemon)
     assert set(body) == STATUS_KEYS
     assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
-    assert body["purchase_mode"] == "mock" and body["name"] == "Monitoni"
+    assert body["purchase_mode"] == "mock"
+    assert body["name"] == "Monitoni" and body["location"] == ""
     assert body["purchase_server"] == {"reachable": True, "since": None, "last_ok": None,
                                        "last_error": None, "outbox_pending": 0,
                                        "base_url": "monitoni.zhdk.ch"}

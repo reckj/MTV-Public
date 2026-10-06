@@ -3,16 +3,12 @@
 // bar title, the shelf number, the countdown, the QR code and the machine illustration.
 "use strict";
 
-const cs = { built: false, name: null, qrUrl: null };
+const cs = { built: false, qrUrl: null };
 
 function renderCustomer(s) {
   if (!cs.built) buildLevels(s.levels);
-  if (s.name !== cs.name) {  // "Monitoni · ZHdK · Toni-Areal": the wordmark, then the small line
-    cs.name = s.name;
-    const [mark, ...rest] = s.name.split(" · ");
-    el("brand").textContent = mark;
-    el("brand_sub").textContent = rest.join(" · ");
-  }
+  el("brand").textContent = s.name;  // the wordmark and the small line: two config values
+  el("brand_sub").textContent = s.location;
   for (const node of document.querySelectorAll("#customer .level")) {
     node.textContent = s.selected_level ?? "";
   }
