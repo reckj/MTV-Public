@@ -25,9 +25,8 @@ class _Strict(BaseModel):
 
 
 class SystemConfig(_Strict):
-    name: str
+    name: str  # the customer screens' top bar: "Monitoni · ZHdK · Toni-Areal" style
     machine_id: str
-    maintenance_message: str  # shown on the out-of-order screen while the runtime switch is on
 
 
 class RelayModuleConfig(_Strict):

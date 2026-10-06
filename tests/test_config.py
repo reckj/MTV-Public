@@ -36,7 +36,7 @@ def test_local_overlay_merges_nested_keys(tmp_path):
     assert config.hardware.relay_core.host == "10.0.0.5"
     # untouched siblings keep their defaults
     assert config.hardware.relay_core.port == 502
-    assert config.system.name == "MoniToni Vending Machine"
+    assert config.system.name == "Monitoni"
 
 
 def test_missing_local_file_is_fine(tmp_path):
@@ -217,7 +217,8 @@ def test_pin_must_be_4_to_8_digits_as_a_string(tmp_path, pin):
         load_config(write_yaml(tmp_path / "default.yaml", data))
 
 
-@pytest.mark.parametrize("section,key", [("system", "maintenance_mode"), ("qr", "dir")])
+@pytest.mark.parametrize("section,key", [("system", "maintenance_mode"), ("qr", "dir"),
+                                         ("system", "maintenance_message")])
 def test_deleted_keys_are_refused(tmp_path, section, key):
     local = write_yaml(tmp_path / "local.yaml", {section: {key: True}})
     with pytest.raises(ConfigError, match=re.escape(f"{section}.{key}: Extra inputs")):

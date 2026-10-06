@@ -3,9 +3,10 @@
 # top of this file key by key.
 
 system:
-  name: "MoniToni Vending Machine"
+  # What customers see in the top bar. The part before the first " · " is the wordmark, the
+  # rest the small line under it, e.g. "Monitoni · ZHdK · Toni-Areal"; set it in local.yaml.
+  name: "Monitoni"
   machine_id: "VM001"
-  maintenance_message: "Machine under maintenance"   # shown while "Out of order" is switched on
 
 hardware:
   # real = talk to the modules below. Development always runs `python -m monitoni --mock`.

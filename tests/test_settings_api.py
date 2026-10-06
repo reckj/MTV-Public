@@ -364,7 +364,7 @@ async def test_turn_held_across_the_timeout_stops_the_motor(client, make_daemon)
 
 async def test_status_additions(client, daemon):
     body = await status(client, daemon)
-    assert body["app_version"] == "0.6.0"
+    assert body["app_version"] == "0.7.0"
     assert isinstance(body["hostname"], str) and body["hostname"]
     assert body["ip"] is None or body["ip"].count(".") == 3
     assert body["purchase_server"]["base_url"] == "monitoni.zhdk.ch"

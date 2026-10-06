@@ -2,8 +2,6 @@
 
 import asyncio
 import contextlib
-import functools
-import io
 import json
 import logging
 from pathlib import Path
@@ -11,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import qrcode
 from aiohttp import web
+from qrcode.image.svg import SvgPathImage
 
 from monitoni.eventlog import FILTERS
 from monitoni.flow import Event, IllegalTransition, State
@@ -41,7 +40,7 @@ def create_app(daemon: "Daemon") -> web.Application:
     app.router.add_post("/api/settings/{name}", api_settings)
     app.router.add_get("/api/events", api_events)
     app.router.add_get("/api/events/summary", api_events_summary)
-    app.router.add_get(r"/api/qr/{level:\d+}.png", api_qr)
+    app.router.add_get(r"/api/qr/{level:\d+}.svg", api_qr)
     app.router.add_get(r"/api/qr/{level:\d+}.json", api_qr_json)
     app.router.add_get("/ws", websocket)
     app.router.add_static("/static", STATIC_DIR)
@@ -129,6 +128,15 @@ async def api_command(request: web.Request) -> web.Response:
             daemon.hardware.simulate_door(open_)
             await daemon.events.write("dev", daemon.flow.state.value,
                                       level=daemon.flow.selected_level, details=body)
+        elif command == "simulate_server":
+            if not daemon.purchase_is_mock:
+                return error(403, "reachability can only be simulated with the mock purchase "
+                                  "server")
+            reachable = body.get("reachable")
+            if not isinstance(reachable, bool):
+                return error(400, "reachable must be true or false")
+            daemon.purchase.simulate_reachable(reachable)
+            await daemon.events.write("dev", daemon.flow.state.value, details=body)
         else:
             return error(400, f"unknown command {command!r}")
     except ValueError as exc:
@@ -142,15 +150,16 @@ async def api_command(request: web.Request) -> web.Response:
 
 # -- QR codes ------------------------------------------------------------------
 
-async def api_qr(request: web.Request) -> web.StreamResponse:
-    """The level's QR code as PNG, rendered in memory on first use and kept (it is a pure
-    function of qr.base_url and the level, so there is nothing to regenerate)."""
+async def api_qr(request: web.Request) -> web.Response:
+    """The level's QR code as an SVG path without a quiet zone and without a fill: the page
+    inlines it, colours the modules and surrounds it with the cream plate. A pure function of
+    qr.base_url and the level, rendered on every request (a few milliseconds)."""
     daemon = request.app[DAEMON]
     level = int(request.match_info["level"])
     if not 1 <= level <= daemon.config.vending.levels:
         return error(404, f"level must be 1..{daemon.config.vending.levels}")
-    png = await asyncio.to_thread(qr_png, qr_data(daemon.config.qr.base_url, level))
-    return web.Response(body=png, content_type="image/png")
+    svg = qr_svg(qr_data(daemon.config.qr.base_url, level))
+    return web.Response(text=svg, content_type="image/svg+xml")
 
 
 async def api_qr_json(request: web.Request) -> web.Response:
@@ -169,11 +178,16 @@ def qr_data(base_url: str, level: int) -> str:
     return f"{base_url}?level={level}"
 
 
-@functools.lru_cache(maxsize=64)
-def qr_png(data: str) -> bytes:
-    buffer = io.BytesIO()
-    qrcode.make(data).save(buffer, format="PNG")
-    return buffer.getvalue()
+class _QrPath(SvgPathImage):
+    QR_PATH_STYLE = {"fill-rule": "nonzero", "stroke": "none"}  # no fill: the page colours it
+
+
+def qr_svg(data: str) -> str:
+    """`<svg viewBox="0 0 N N"><path d=.../></svg>`, one unit per module, no quiet zone."""
+    qr = qrcode.QRCode(border=0)
+    qr.add_data(data)
+    image = qr.make_image(image_factory=_QrPath)
+    return image.to_string(encoding="unicode").replace(' id="qr-path"', "")  # inlined twice
 
 
 # -- WebSocket: status out, nothing in ---------------------------------------

@@ -8,16 +8,16 @@ import pytest
 from monitoni.daemon import Daemon
 from monitoni.hardware.base import HardwareError, HardwareFault
 from monitoni.hardware.mock import MockHardware
-from monitoni.purchase import MockPurchaseServer
+from monitoni.purchase import MockPurchaseServer, PurchaseServerError
 from monitoni.runtime import Runtime
 from monitoni.web.server import qr_data
 from tests.conftest import http_purchase
 from tests.helpers import command, events, status, wait_for_state, wait_until
 
-STATUS_KEYS = {"machine_id", "app_version", "hostname", "ip", "hardware_mode", "purchase_mode",
-               "uptime_s", "state", "reason", "selected_level", "purchase_id", "levels", "doors",
-               "countdown_s", "qr_url", "maintenance_message", "hardware", "motor",
-               "purchase_server", "leds", "audio", "settings", "config_view"}
+STATUS_KEYS = {"name", "machine_id", "app_version", "hostname", "ip", "hardware_mode",
+               "purchase_mode", "uptime_s", "state", "reason", "selected_level", "purchase_id",
+               "levels", "doors", "countdown_s", "qr_url", "hardware", "motor", "purchase_server",
+               "leds", "audio", "settings", "config_view"}
 
 
 class FailingMotor(MockHardware):
@@ -61,7 +61,7 @@ async def test_status_endpoint(client, daemon):
     body = await status(client, daemon)
     assert set(body) == STATUS_KEYS
     assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
-    assert body["purchase_mode"] == "mock"
+    assert body["purchase_mode"] == "mock" and body["name"] == "Monitoni"
     assert body["purchase_server"] == {"reachable": True, "since": None, "last_ok": None,
                                        "last_error": None, "outbox_pending": 0,
                                        "base_url": "monitoni.zhdk.ch"}
@@ -86,7 +86,7 @@ async def test_happy_path(client, daemon):
     code, body = await command(client, daemon, command="select_level", level=3)
     assert code == 200
     assert body["state"] == "checking_purchase" and body["selected_level"] == 3
-    assert body["qr_url"] == "/api/qr/3.png" and body["purchase_id"]
+    assert body["qr_url"] == "/api/qr/3.svg" and body["purchase_id"]
 
     code, _ = await command(client, daemon, command="simulate_payment")
     assert code == 200
@@ -187,22 +187,55 @@ async def test_forced_door_path(client, daemon):
     assert not [r for r in rows if r["kind"] == "outbox"]
 
 
-async def test_qr_png(client, daemon):
-    async with client.get(daemon.url + "/api/qr/3.png") as resp:
-        assert resp.status == 200 and resp.content_type == "image/png"
-        assert (await resp.read())[:8] == b"\x89PNG\r\n\x1a\n"
+async def test_qr_svg_is_a_bare_path_without_a_quiet_zone(client, daemon):
+    async with client.get(daemon.url + "/api/qr/3.svg") as resp:
+        assert resp.status == 200 and resp.content_type == "image/svg+xml"
+        svg = await resp.text()
+    assert svg.startswith("<svg ") and svg.endswith("</svg>") and svg.count("<path ") == 1
+    assert 'viewBox="0 0 29 29"' in svg  # 29 modules for this data: version 3, border 0
+    assert ' d="M0,0H1V1H0z' in svg  # the first module sits at the origin: no quiet zone
+    assert "fill=" not in svg and "id=" not in svg  # the page colours it
     async with client.get(daemon.url + "/api/qr/3.json") as resp:
         assert resp.status == 200
         assert await resp.json() == {"level": 3, "data": "https://www.monitoni.zhdk.ch?level=3"}
     async with client.get(daemon.url + "/api/qr/11.json") as resp:
         assert resp.status == 404
     for bad in ("0", "11", "abc"):
-        async with client.get(daemon.url + f"/api/qr/{bad}.png") as resp:
+        async with client.get(daemon.url + f"/api/qr/{bad}.svg") as resp:
             assert resp.status == 404, bad
+    async with client.get(daemon.url + "/api/qr/3.png") as resp:
+        assert resp.status == 404  # the PNG route is gone
 
 
 def test_qr_data_matches_the_old_machines():
     assert qr_data("https://www.monitoni.zhdk.ch", 3) == "https://www.monitoni.zhdk.ch?level=3"
+
+
+async def test_simulate_server_flips_the_mock_purchase_server(client, daemon):
+    code, body = await command(client, daemon, command="simulate_server", reachable=False)
+    assert code == 200
+    ps = body["purchase_server"]
+    assert ps["reachable"] is False and ps["since"] and ps["last_error"] == "simulated: unreachable"
+    with pytest.raises(PurchaseServerError):
+        await daemon.purchase.permission()
+    await command(client, daemon, command="select_level", level=3)
+    await command(client, daemon, command="simulate_payment")
+    await asyncio.sleep(0.05)  # several polls, all failing
+    assert (await status(client, daemon))["state"] == "checking_purchase"
+    code, body = await command(client, daemon, command="simulate_server", reachable=True)
+    assert code == 200 and body["purchase_server"]["reachable"] is True
+    await wait_for_state(client, daemon, "door_unlocked")  # the pending payment went through
+    rows = [r["details"] for r in reversed(await events(client, daemon)) if r["kind"] == "network"]
+    assert rows == [{"purchase_server": "unreachable", "error": "simulated: unreachable"},
+                    {"purchase_server": "reachable", "error": None}]
+    code, _ = await command(client, daemon, command="simulate_server", reachable="no")
+    assert code == 400
+
+
+async def test_simulate_server_needs_the_mock_purchase_server(client, make_daemon, purchase_fake):
+    daemon = await make_daemon(purchase_fake=purchase_fake)
+    code, body = await command(client, daemon, command="simulate_server", reachable=False)
+    assert code == 403 and "mock purchase server" in body["error"]
 
 
 async def test_events_filters_before_and_summary_over_http(client, daemon):

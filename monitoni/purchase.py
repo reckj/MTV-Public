@@ -167,11 +167,14 @@ class HttpPurchaseServer:
 # -- the mock, for mock mode and tests -------------------------------------------
 
 class MockPurchaseServer:
-    """`permission` says NotYet until `simulate_payment(level)`, then Permitted once; always
-    reachable. `complete`/`close` are recorded in order in `reports`."""
+    """`permission` says NotYet until `simulate_payment(level)`, then Permitted once.
+    `complete`/`close` are recorded in order in `reports`. Reachable until `simulate_reachable(
+    False)`: then `permission` raises like a dead link would, until `simulate_reachable(True)`."""
 
     def __init__(self) -> None:
         self.on_reachability: Callable[[bool], None] = lambda ok: None
+        self.reachable = True
+        self.since: str | None = None
         self._pending: list[int] = []
         self.reports: list[str] = []
 
@@ -182,7 +185,17 @@ class MockPurchaseServer:
         pass
 
     def status(self) -> dict:
-        return {"reachable": True, "since": None, "last_ok": None, "last_error": None}
+        return {"reachable": self.reachable, "since": self.since, "last_ok": None,
+                "last_error": None if self.reachable else "simulated: unreachable"}
+
+    def simulate_reachable(self, ok: bool) -> None:
+        """The dev command `simulate_server`: flips reachability the way a real link would."""
+        if ok == self.reachable:
+            return
+        self.reachable = ok
+        self.since = local_time()
+        log.info("mock purchase server: %s", "reachable" if ok else "unreachable")
+        self.on_reachability(ok)
 
     def simulate_payment(self, level: int, item: int | None = None) -> None:
         """The next permission answers true with Item = `item` (default: the level paid for)."""
@@ -190,6 +203,8 @@ class MockPurchaseServer:
         self._pending.append(level if item is None else item)
 
     async def permission(self) -> PermissionResult:
+        if not self.reachable:
+            raise PurchaseServerError("simulated: unreachable")
         if not self._pending:
             return NotYet()
         item = self._pending.pop(0)

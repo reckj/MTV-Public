@@ -260,6 +260,7 @@ class Daemon:
         hardware = self.hardware.status()
         motor_cfg = self.config.hardware.motor
         return {
+            "name": self.config.system.name,
             "machine_id": self.config.system.machine_id,
             "app_version": __version__,
             "hostname": self.hostname,
@@ -270,8 +271,7 @@ class Daemon:
             **flow,
             "levels": levels,
             "doors": {str(n): hardware["doors"].get(n, "unknown") for n in range(1, levels + 1)},
-            "qr_url": None if level is None else f"/api/qr/{level}.png",
-            "maintenance_message": self.config.system.maintenance_message,
+            "qr_url": None if level is None else f"/api/qr/{level}.svg",
             "hardware": hardware,
             "motor": self.motor.status(),
             "leds": self.leds.status(),
