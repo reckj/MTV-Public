@@ -130,9 +130,13 @@ from `config/default.yaml`):
   identity. `purchase_server.base_url` normally stays at the default
   `https://monitoni.zhdk.ch`.
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
-  the same pattern as the old machines (no machine id). Generated PNGs land
-  in `data/qr/`; delete a file there to regenerate it after changing the
-  value.
+  the same pattern as the old machines (no machine id). The codes are drawn
+  from this value on demand; change it, restart, done.
+- `settings.pin` — the PIN for the settings area on the touchscreen, 4 to 8
+  digits, written as a string in quotes (`pin: "4711"`). The default is
+  `"0000"`; every start with the default logs the line `settings.pin is still
+  the default 0000: set it in config/local.yaml` and the settings home screen
+  shows "DEFAULT PIN — CHANGE IT IN LOCAL.YAML" until it is changed.
 - `hardware.wled.pixel_count` — how many pixels the LED strip has, and
   `led.zones` — which pixels belong to which level: one `[first, last]` pair
   per level, level 1 first, both numbers inclusive, pixel 0 being the one
@@ -155,6 +159,18 @@ Both Waveshare modules ship with the same address, 192.168.1.254. Each needs
 its own static IP before the daemon can talk to both; `default.yaml` assumes
 192.168.1.100 for `relay_core` and 192.168.1.101 for `relay_levels`. How to
 change a module's address will be written down when it has been done.
+
+Older `local.yaml` files: the key `system.maintenance_mode` no longer exists
+(the Out of order switch in the settings area replaced it) and neither does
+`qr.dir`. The daemon refuses to start with an unknown key and names it, for
+example `system.maintenance_mode: Extra inputs are not permitted`; delete that
+line from `local.yaml`.
+
+`data/runtime.json`, next to the database, is written by the daemon and holds
+the three switches a user changes on the machine: `out_of_order` (true keeps
+the machine on the "Out of order" screen across restarts), `brightness` and
+`volume` (0 to 1). Deleting the file resets all three to the configuration;
+do not edit it by hand while the daemon runs.
 
 On the development laptop none of these are set; mock mode runs on the
 defaults. Setting them on a Pi: _to be written during integration._
@@ -179,13 +195,13 @@ state in the header with a green "connected" badge, level buttons 1 to 10 in
 `idle`, the QR code and a cancel button after selecting a level, the door
 instructions while a door is open, a red screen when the door alarm is on or
 a door was opened without a purchase, and a dark screen in sleep (tap to
-wake). A dev panel at the bottom offers "Simulate payment" (as long as the
-purchase server is the built-in mock, which is every mode until the real
-client exists) and, with mock hardware, "Door open" and "Door close"; it shows
-the hardware status object and lists the last 20 events. Walk the flow:
-select a level, simulate payment, door open, door close, back to idle. Every
-step is written to `data/monitoni.db`. Stop the daemon with Ctrl+C; it logs
-"shutdown requested" and exits.
+wake). A dev panel at the bottom offers "Simulate payment" (with the mock
+purchase server) and, with mock hardware, "Door open" and "Door close"; it
+shows the hardware status object and lists the last 20 events. The same three
+buttons sit on the settings home screen as a "Simulation" card in mock mode.
+Walk the flow: select a level, simulate payment, door open, door close, back
+to idle. Every step is written to `data/monitoni.db`. Stop the daemon with
+Ctrl+C; it logs "shutdown requested" and exits.
 
 In `idle` the page also shows a big TURN button: hold it to run the motor
 (spindle lock opens first); it stops on release and after `max_run_s`
@@ -198,8 +214,11 @@ hardware", and `/api/status` lists both modules under `hardware` with
 `connected` and `last_error`. The daemon reconnects every 2, 5, 10, then
 30 seconds and returns to `idle` by itself once both modules have answered
 and the door sensor has been reading for 10 seconds without a break. A module
-that drops out during operation has the same effect. "Reason: maintenance" (from `system.maintenance_mode`) never clears
-itself.
+that drops out during operation has the same effect. "Reason: maintenance"
+means the Out of order switch in the settings area is on; it never clears
+itself. "Reason: database" means a vend could not be recorded for the server
+(the disk refused); it clears when someone opens the settings and leaves them,
+or on a restart.
 
 "Payment server not reachable" in `idle`, and "Payment currently not
 possible — please wait" instead of the QR code after a level was selected, mean
@@ -234,6 +253,46 @@ decides between running the daemon as the kiosk user (the one with the
 PipeWire session) and bypassing PipeWire with `SDL_AUDIODRIVER=alsa` plus
 `AUDIODEV` pinned to the HDMI device in the systemd unit. Nothing about this
 can be settled on the laptop.
+
+**The settings area.** Tap the small gear in the top right corner of the
+"Select a level" screen (or of the "Out of order" screen), type the PIN on the
+keypad and press Enter. A wrong PIN shakes the dots and clears them; there is
+no lockout. The home screen shows six dots: Doors (the door relay module),
+Core (the core relay module), LEDs (the WLED controller answers), Server (the
+purchase server answered the last request), Sensor (the door sensor is being
+read), Audio (a sound device was found). Green is fine, red is a problem, amber
+is "not known yet"; the line under the dots names the first problem. Below:
+the Out of order switch, the sections Doors, Motor, LEDs, Audio, Network, QR
+codes and Events, and the footer with the machine id, the software version and
+the uptime. "Exit" at the top left returns to the customer screen; it refuses
+while the door sensor reads open ("Close the door first"). After 5 minutes
+without a touch the area closes by itself.
+
+To take the machine out of service: settings → Out of order switch → "Switch
+on" in the confirmation → Exit. Customers now see "Out of order" with the
+maintenance message; the switch stays on across restarts. To put it back:
+gear on the "Out of order" screen → PIN → switch off → confirm → Exit.
+
+Each section tests one component and shows its live state: Doors unlocks or
+locks a shelf (no vend starts, the door may be opened without an alarm; Lock
+all doors at the bottom), Motor has the TURN button and a spindle lock test
+with the timings from `local.yaml`, LEDs has the brightness slider, Off /
+White / Amber and a shelf to light, Audio the volume slider and the three
+sounds, Network the machine's own IP, the three devices and the purchase
+server with a "Test server" button (one request, the answer is "OK · N ms" or
+the error), QR codes shows each shelf's code and the address it encodes, and
+Events the counters (vends today and total, alarms and faults today) with the
+event list (All / Vends / Hardware / Network, newest first, "Load more"). The
+list has no export: to take the data off the machine copy the SQLite file.
+From another computer on the same network, with the Pi's user and address:
+
+```
+scp pi@192.168.1.50:/home/pi/monitoni/data/monitoni.db ./monitoni-$(date +%F).db
+```
+
+(replace the user, the address and the path with the machine's; the file can
+be opened with any SQLite tool, table `events`). Copying while the daemon runs
+is safe; the copy may miss the last second.
 
 _Real hardware start on a Pi: to be written during integration._
 
