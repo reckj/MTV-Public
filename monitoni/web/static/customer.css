@@ -1,0 +1,91 @@
+/* Customer screens C1–C9 (source design/screens-2026-10-06.html). `data-state` on <body> picks
+   the section; the machine illustration and the dot grid sit behind C4–C9. */
+
+#customer { width: 400px; min-height: 100vh; margin: 0 auto; position: relative; display: flex; flex-direction: column; }
+body[data-screen^="S"] #customer { display: none; }
+section[data-state] { display: none; flex-direction: column; }  /* the state rules below outrank this */
+body[data-state="idle"] section[data-state="idle"],
+body[data-state="sleep"] section[data-state="sleep"],
+body[data-state="checking_purchase"] section[data-state="checking_purchase"],
+body[data-state="door_unlocked"] section[data-state="door_unlocked"],
+body[data-state="door_opened"] section[data-state="door_opened"],
+body[data-state="door_alarm"] section[data-state="door_alarm"],
+body[data-state="door_forced"] section[data-state="door_forced"],
+body[data-state="completing"] section[data-state="completing"],
+body[data-state="out_of_order"] section[data-state="out_of_order"] { display: flex; }
+
+/* TopBar, customer kind: the wordmark and the small line (system.name), the gear on C1 and C9 */
+.brand { font-family: var(--font-display); font-weight: 700; font-size: var(--t-brand); letter-spacing: .18em; text-transform: uppercase; white-space: nowrap; }
+.brand small { display: block; font-family: var(--font-mono); font-size: 14px; letter-spacing: .1em; font-weight: 400; color: var(--cream-dim); margin-top: 2px; }
+.brand small:empty { display: none; }
+.gear { display: none; width: 56px; height: 56px; align-items: center; justify-content: center; opacity: .45; margin-right: -12px; }
+.gear svg { width: 26px; height: 26px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+body[data-state="idle"] .gear, body[data-state="out_of_order"] .gear { display: flex; }
+
+/* C1: TURN, the caption, ten tiles; the corner hint while the server is unreachable */
+.levels { display: grid; gap: var(--gap-s); }
+.lv { height: var(--h-tile); width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 0 26px 0 24px; font-family: var(--font-display); font-size: var(--t-num); font-weight: 600; font-variant-numeric: tabular-nums; }
+.lv .cap { font-size: var(--t-cap-s); }
+.lv.on .cap { color: inherit; opacity: .75; }
+.hint { display: none; position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 28px; font-family: var(--font-mono); font-size: 16px; letter-spacing: .06em; text-transform: uppercase; color: var(--amber); text-align: center; }
+body[data-state="idle"][data-reachable="false"] .hint { display: block; }
+section[data-state="idle"] { padding-bottom: 60px; }  /* room for the hint */
+
+/* C2: true black, one dim line (burn-in) */
+body[data-state="sleep"], body[data-state="sleep"] #customer { background: #000; }
+body[data-state="sleep"] .top { display: none; }
+.cap.dim { color: var(--line); }
+
+/* C3: the selected shelf, the plate with the code or the message, the countdown, Cancel */
+.lv.selected { height: 90px; font-size: var(--t-num-l); }
+.qr.off { background: transparent; border: var(--stroke) dashed var(--line); color: var(--cream-dim); font-size: 26px; text-align: center; padding: 30px; line-height: 1.3; align-items: center; justify-content: center; }
+.cap.amber { color: var(--amber); }
+.reach, .unreach { display: none; }
+body[data-reachable="true"] .reach { display: block; }
+body:not([data-reachable="true"]) .unreach { display: block; }
+body:not([data-reachable="true"]) .qr.off.unreach { display: flex; }
+.cd { font-family: var(--font-dot); font-size: var(--t-dot-l); font-weight: 700; color: var(--cream); letter-spacing: .06em; margin-top: 18px; font-variant-numeric: tabular-nums; }
+.cd.center { margin: 0; align-self: center; }
+
+/* C4–C9: the full-screen messages over the illustration */
+.full { flex: 1; align-items: center; justify-content: flex-start; padding: 60px 24px 0; gap: 10px; text-align: center; position: relative; z-index: 1; }
+.full.mid { justify-content: center; padding-top: 0; }
+.full .n { font-family: var(--font-display); font-size: var(--t-num-xl); line-height: .9; font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.full .t { font-family: var(--font-display); font-size: var(--t-title); line-height: 1.1; font-weight: 600; text-wrap: balance; }
+.full .t.xl { font-size: 60px; margin-top: 20px; }
+.full .s { font-size: var(--t-body); color: var(--cream-dim); max-width: 310px; text-wrap: balance; line-height: 1.3; }
+body:not([data-reason="hardware"]) #reason_line { display: none; }  /* C9: hardware faults only */
+
+/* C6, C7: the alert ground, cream everywhere */
+body[data-state="door_alarm"], body[data-state="door_forced"] { background: var(--alert-ground); }
+body[data-state="door_alarm"] :is(.full .s, .cap, .brand small),
+body[data-state="door_forced"] :is(.full .s, .cap, .brand small) { color: var(--cream); }
+
+/* the dot grid (C4, C5, C8) and the illustration (C4–C9), both behind everything */
+.dots, .illu { position: absolute; inset: 0; display: none; pointer-events: none; }
+.dots { background-image: var(--dot-grid); background-size: var(--dot-size) var(--dot-size); opacity: .5;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 55%, black 100%); mask-image: linear-gradient(to bottom, transparent 55%, black 100%); }
+body[data-state="door_unlocked"] .dots, body[data-state="door_opened"] .dots, body[data-state="completing"] .dots { display: block; }
+.illu { align-items: flex-end; justify-content: center; }
+body[data-state="door_unlocked"] .illu, body[data-state="door_opened"] .illu, body[data-state="door_alarm"] .illu,
+body[data-state="door_forced"] .illu, body[data-state="completing"] .illu, body[data-state="out_of_order"] .illu { display: flex; }
+.illu svg { width: 300px; height: auto; opacity: .28; stroke: var(--cream); fill: none; }
+body[data-state="out_of_order"] .illu svg { opacity: .14; width: 260px; }
+
+/* the machine's states (design/machine/gen.py `rules()`, colours as tokens) */
+.machine .leaf-open, .machine .frame { display: none; }
+.machine.highlight .door.on .leaf { stroke: var(--amber); stroke-width: 2.5; fill: var(--amber); fill-opacity: .25; }
+.machine.highlight .door.on .handle { stroke: var(--amber); }
+.machine.open .door.on .leaf, .machine.open .door.on .handle { display: none; }
+.machine.open .door.on .leaf-open { display: inline; stroke: var(--amber); stroke-width: 2.5; fill: var(--amber); fill-opacity: .3; }
+.machine.open .door.on .frame { display: inline; stroke: var(--amber); stroke-opacity: .5; }
+body[data-state="door_alarm"] .machine .door.on :is(.leaf, .leaf-open) { stroke: var(--cream); fill: var(--cream); }
+body[data-state="door_alarm"] .machine .door.on :is(.handle, .frame) { stroke: var(--cream); }
+
+/* while the daemon is away: C9's look, "Out of order" alone, nothing to press */
+body.disconnected:not([data-screen^="S"]) { background: var(--ground); }
+body.disconnected #customer section, body.disconnected .gear, body.disconnected #reason_line,
+body.disconnected .dots, body.disconnected .hint { display: none; }
+body.disconnected #customer section[data-state="out_of_order"], body.disconnected .illu { display: flex; }
+body.disconnected .illu svg { opacity: .14; width: 260px; }
+body.disconnected .top { display: flex; }

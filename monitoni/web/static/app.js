@@ -1,124 +1,101 @@
-// Dev page. Renders the status object the daemon pushes; sends commands over POST.
-// No timers, no state, no transition logic here.
+// The kiosk page: one WebSocket in, commands out over POST. Shared by the customer screens
+// (customer.js) and the settings area (settings.js). No timers and no state logic here: the
+// status object is the only input, and the daemon's answer to a command is the only truth.
 "use strict";
 
-const RECONNECT_DELAY_MS = 2000;
-const EVENT_LIMIT = 20;
+const BACKOFF_MS = [1000, 2000, 5000, 10000];  // reconnect waits; the last one repeats
+const TOUCH_THROTTLE_MS = 1000;
 
-const $ = (id) => document.getElementById(id);
-
-async function send(body) {
-  const resp = await fetch("/api/command", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    console.warn("command rejected", resp.status, err.error);
+const el = (id) => document.getElementById(id);
+const h = (tag, attrs = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node[k] = v;
+    else node.setAttribute(k, v);
   }
+  node.append(...children);
+  return node;
+};
+
+// -- talking to the daemon ------------------------------------------------------------
+
+async function api(path, body) {
+  const resp = await fetch(path, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  return { ok: resp.ok, status: resp.status, data };
 }
 
-let lastState = null;
+// customer and dev commands: a refusal is the daemon's decision, the next status shows the result
+const send = (body) => api("/api/command", body);
+
+// settings tools: a refusal is shown in the toast
+async function post(name, body = {}) {
+  const r = await api(`/api/settings/${name}`, body);
+  if (!r.ok) toast(`${r.status} · ${r.data.error ?? "refused"}`);
+  return r;
+}
+
+let toastTimer = null;
+function toast(text) {
+  el("toast").textContent = text;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el("toast").textContent = ""; }, 4000);
+}
+
+// a QR code as an inline SVG path; the page colours it and the plate gives the quiet zone
+async function inlineQr(node, url) {
+  node.replaceChildren();
+  const resp = await fetch(url);
+  if (resp.ok) node.innerHTML = await resp.text();
+  return resp.ok;
+}
+
+// TURN, on C1 and S3: pointer down presses, anything that ends the hold releases
+function wireTurn(button) {
+  const release = () => send({ command: "motor_release" });
+  button.onpointerdown = () => send({ command: "motor_press" });
+  button.onpointerup = button.onpointercancel = button.onpointerleave = release;
+  button.oncontextmenu = (e) => e.preventDefault();
+}
+
+// -- the status in, the screens out --------------------------------------------------------
 
 function render(status) {
-  document.body.dataset.state = status.state;
-  $("state_name").textContent = status.state;
-  $("countdown").textContent = status.countdown_s === null ? "" : `${status.countdown_s.toFixed(0)} s`;
-  for (const el of document.querySelectorAll(".selected_level")) {
-    el.textContent = status.selected_level ?? "";
-  }
-  $("maintenance_message").textContent = status.maintenance_message;
-  $("reason").textContent = status.reason ? `Reason: ${status.reason}` : "";
-  document.body.dataset.reason = status.reason ?? "";
-  $("purchase_id").textContent = status.purchase_id ?? "–";
-  document.body.dataset.motor = status.motor.running ? "running" : status.motor.pressed ? "pressed" : "";
-  document.body.dataset.hardware = status.hardware_mode;
-  document.body.dataset.purchase = status.purchase_mode;
-  document.body.dataset.reachable = String(status.purchase_server.reachable);
-
-  const qr = $("qr");
-  const src = status.qr_url ?? "";
-  if (qr.getAttribute("src") !== src) qr.setAttribute("src", src);
-
-  const levels = $("levels");
-  if (levels.childElementCount !== status.levels) {
-    levels.replaceChildren();
-    for (let n = 1; n <= status.levels; n++) {
-      const b = document.createElement("button");
-      b.textContent = `Level ${n}`;
-      b.onclick = () => send({ command: "select_level", level: n });
-      levels.append(b);
-    }
-  }
-
-  const dev = $("dev");
-  dev.hidden = status.hardware_mode !== "mock" && status.purchase_mode !== "mock";
-  if (!dev.hidden) {
-    $("doors").textContent = Object.entries(status.doors)
-      .map(([n, s]) => `${n}:${s === "locked" ? "🔒" : s === "unlocked" ? "🔓" : "?"}`).join(" ");
-    $("motor").textContent = JSON.stringify(status.motor);
-    const leds = status.leds;
-    const reach = leds.reachable === null ? "unknown" : leds.reachable ? "reachable" : "unreachable";
-    $("leds").textContent = `${leds.pattern} · level ${leds.level ?? "–"} · ${reach}`;
-    $("audio").textContent = (status.audio.playing ?? "—") + (status.audio.available ? "" : " (unavailable)");
-    $("outbox").textContent = `${status.purchase_server.outbox_pending} pending`;
-    $("purchase_server").textContent = JSON.stringify(status.purchase_server);
-    $("hardware").textContent = JSON.stringify(status.hardware, null, 1);
-    if (status.state !== lastState) loadEvents();  // the list, not on every heartbeat
-    lastState = status.state;
-  }
+  const body = document.body;
+  body.dataset.state = status.state;
+  body.dataset.reason = status.reason ?? "";
+  body.dataset.reachable = String(status.purchase_server.reachable);
+  body.dataset.motor = status.motor.running ? "running" : status.motor.pressed ? "pressed" : "";
+  renderCustomer(status);  // customer.js: C1–C9
   renderSettings(status);  // settings.js: S0–S8
 }
 
-async function loadEvents() {
-  const rows = await fetch(`/api/events?limit=${EVENT_LIMIT}`).then((r) => r.json());
-  $("events").replaceChildren(...rows.map((e) => {
-    const li = document.createElement("li");
-    const details = e.details ? JSON.stringify(e.details) : "";
-    li.textContent = `${e.ts.slice(11, 23)} ${e.kind} [${e.state}] ${details}`;
-    return li;
-  }));
-}
-
-function setConnected(connected) {
-  const el = $("connection");
-  el.textContent = connected ? "connected" : "disconnected";
-  el.className = connected ? "connected" : "disconnected";
-  document.body.classList.toggle("disconnected", !connected);
-}
-
+let attempts = 0;
 function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${scheme}://${location.host}/ws`);
-  ws.onopen = () => setConnected(true);
+  ws.onopen = () => { attempts = 0; document.body.classList.remove("disconnected"); };
   ws.onmessage = (event) => render(JSON.parse(event.data));
   ws.onclose = () => {
-    setConnected(false);
-    setTimeout(connect, RECONNECT_DELAY_MS);
+    document.body.classList.add("disconnected");
+    renderOffline();  // customer.js: the "Out of order" look until the next status
+    setTimeout(connect, BACKOFF_MS[Math.min(attempts++, BACKOFF_MS.length - 1)]);
   };
   ws.onerror = () => ws.close();
 }
 
-for (const b of document.querySelectorAll("button[data-command]")) {
-  b.onclick = () => {
-    const body = { command: b.dataset.command };
-    if ("open" in b.dataset) body.open = b.dataset.open === "true";
-    send(body);
-  };
-}
-$("sleep").onclick = () => send({ command: "touch" });
-
-// TURN: hold to run the motor. Pointer down presses, anything that ends the hold releases.
-const turn = $("turn");
-const releaseTurn = () => send({ command: "motor_release" });
-turn.onpointerdown = () => send({ command: "motor_press" });
-turn.onpointerup = releaseTurn;
-turn.onpointercancel = releaseTurn;
-turn.onpointerleave = releaseTurn;
-turn.oncontextmenu = (e) => e.preventDefault();
-
-// the gear on idle and out_of_order opens the PIN screen (settings.js owns the screens)
-for (const g of document.querySelectorAll("[data-gear]")) g.onclick = () => setScreen("S0");
+// every touch is activity: the daemon restarts its sleep or settings timer (at most once a
+// second; a TURN press is a touch of its own)
+let lastTouch = 0;
+document.addEventListener("pointerdown", (event) => {
+  if (document.body.classList.contains("disconnected") || event.target.closest(".turn")) return;
+  const now = Date.now();
+  if (now - lastTouch < TOUCH_THROTTLE_MS) return;
+  lastTouch = now;
+  send({ command: "touch" });
+});
 
 connect();

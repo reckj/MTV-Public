@@ -1,12 +1,10 @@
 // Settings area S0–S8. Renders the status object the daemon pushes; asks the daemon for
 // everything and shows its answer. `data-screen` on <body> (S0…S8 or empty) is the only
-// client-side navigation state; `send()` (dev commands) comes from app.js.
+// client-side navigation state. `el`, `h`, `send`, `post`, `toast`, `inlineQr` and `wireTurn`
+// come from app.js.
 "use strict";
 
-const SCREENS = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"];
-const TITLES = { S2: "Doors", S3: "Motor", S4: "LEDs", S5: "Audio", S6: "Network", S7: "QR codes", S8: "Events" };
 const AMBER = [233, 162, 59];
-const TOUCH_THROTTLE_MS = 1000;
 const EVENTS_PAGE = 50;
 
 const st = {                 // client-side state: navigation and what the daemon answered last
@@ -17,42 +15,12 @@ const st = {                 // client-side state: navigation and what the daemo
   qrLevel: 1,
   eventsFilter: "all",
   eventRows: [],
-  lastTouch: 0,
   built: false,
 };
 
-const el = (id) => document.getElementById(id);
-const h = (tag, attrs = {}, ...children) => {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k.startsWith("on")) node[k] = v;
-    else node.setAttribute(k, v);
-  }
-  node.append(...children);
-  return node;
-};
 const pad2 = (n) => String(n).padStart(2, "0");
 const clock = (iso) => { const d = new Date(iso); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
 const pct = (x) => `${Math.round(x * 100)} %`;
-
-// -- talking to the daemon ------------------------------------------------------------
-
-async function post(name, body = {}) {
-  const resp = await fetch(`/api/settings/${name}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) toast(`${resp.status} · ${data.error ?? "refused"}`);
-  return { ok: resp.ok, status: resp.status, data };
-}
-
-let toastTimer = null;
-function toast(text) {
-  el("toast").textContent = text;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el("toast").textContent = ""; }, 4000);
-}
 
 // -- navigation -------------------------------------------------------------------------
 
@@ -252,7 +220,7 @@ async function testServer() {
 }
 
 async function loadQr() {
-  el("qr_img").src = `/api/qr/${st.qrLevel}.png`;
+  inlineQr(el("qr_s7"), `/api/qr/${st.qrLevel}.svg`);
   const info = await fetch(`/api/qr/${st.qrLevel}.json`).then((r) => r.json());
   el("qr_data").textContent = info.data;
 }
@@ -340,11 +308,7 @@ function wireSettings() {
   el("sim_close").onclick = () => send({ command: "simulate_door", open: false });
   el("lock_all").onclick = () => post("lock_all");
   el("spindle_btn").onclick = () => post("spindle", { open: !st.status.motor.spindle_open });
-  const turn = el("turn_s3");
-  const release = () => send({ command: "motor_release" });
-  turn.onpointerdown = () => send({ command: "motor_press" });
-  turn.onpointerup = turn.onpointercancel = turn.onpointerleave = release;
-  turn.oncontextmenu = (e) => e.preventDefault();
+  wireTurn(el("turn_s3"));
   el("led_off").onclick = () => post("leds", { action: "off" });
   el("led_white").onclick = () => post("leds", { action: "fill", rgb: [255, 255, 255] });
   el("led_amber").onclick = () => post("leds", { action: "fill", rgb: AMBER });
@@ -358,14 +322,6 @@ function wireSettings() {
   el("test_server").onclick = testServer;
   for (const chip of el("chips").children) chip.onclick = () => { st.eventsFilter = chip.dataset.filter; loadEventList(true); };
   el("load_more").onclick = () => loadEventList(false);
-  // every touch keeps the visit alive; the daemon restarts its timer (at most one a second)
-  el("settings").addEventListener("pointerdown", () => {
-    const now = Date.now();
-    if (st.status?.state === "settings" && now - st.lastTouch > TOUCH_THROTTLE_MS) {
-      st.lastTouch = now;
-      send({ command: "touch" });
-    }
-  });
   renderPin();
 }
 

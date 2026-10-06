@@ -6,88 +6,213 @@
   <title>MoniToni</title>
   <link rel="stylesheet" href="/static/fonts.css">
   <link rel="stylesheet" href="/static/tokens.css">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/customer.css">
   <link rel="stylesheet" href="/static/settings.css">
 </head>
-<body data-state="" data-screen="">
-  <header>
-    <span id="state_name">–</span>
-    <span id="countdown"></span>
-    <span id="connection" class="disconnected">disconnected</span>
-  </header>
-
-  <main>
-    <section data-state="idle">
-      <button class="gear" data-gear aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
-      <h1>Select a level</h1>
-      <p class="net_hint">Payment server not reachable</p>
-      <div id="levels" class="levels"></div>
-      <button id="turn">TURN</button>
-    </section>
-
-    <section data-state="sleep" id="sleep">
-      <p>Tap to wake</p>
-    </section>
-
-    <section data-state="checking_purchase">
-      <h1>Scan to pay</h1>
-      <p>Level <span class="selected_level"></span></p>
-      <img id="qr" alt="QR code" src="">
-      <p id="no_payment">Payment currently not possible — please wait</p>
-      <button data-command="cancel">Cancel</button>
-    </section>
-
-    <section data-state="door_unlocked">
-      <h1>Door <span class="selected_level"></span> is unlocked</h1>
-      <p>Open it.</p>
-    </section>
-
-    <section data-state="door_opened">
-      <h1>Take your product</h1>
-      <p>Then close the door.</p>
-    </section>
-
-    <section data-state="door_alarm" id="alarm">
-      <h1>Please close the door</h1>
-    </section>
-
-    <section data-state="door_forced" id="forced">
-      <h1>Door forced</h1>
-      <p>A door was opened without a purchase. Close it.</p>
-    </section>
-
-    <section data-state="completing">
-      <h1>Thank you</h1>
-    </section>
-
-    <section data-state="out_of_order">
-      <button class="gear" data-gear aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
-      <h1>Out of order</h1>
-      <p id="maintenance_message"></p>
-      <p id="reason"></p>
-    </section>
-
-    <section data-state="settings">
-      <h1>Settings</h1>
-    </section>
-  </main>
-
-  <aside id="dev" hidden>
-    <h2>Dev panel</h2>
-    <div class="row">
-      <button data-command="simulate_payment">Simulate payment</button>
-      <button data-command="simulate_door" data-open="true">Door open</button>
-      <button data-command="simulate_door" data-open="false">Door close</button>
+<body data-state="" data-screen="" class="disconnected">
+  <!-- The customer area: data-state on <body> (the daemon's status) picks one section.
+       idle C1, sleep C2, checking_purchase C3, door_unlocked C4, door_opened C5, door_alarm C6,
+       door_forced C7, completing C8, out_of_order C9; settings shows the area below. -->
+  <div id="customer">
+    <div class="dots"></div>
+    <div class="illu">
+      <svg id="machine" class="machine plain" data-level="" xmlns="http://www.w3.org/2000/svg" width="380" height="560" viewBox="0 0 380 560" fill="none" stroke="#efe4d2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <defs><clipPath id="win"><rect x="62" y="42" width="196" height="466"/></clipPath></defs>
+      <rect id="cabinet" x="30" y="10" width="320" height="540" rx="18"/>
+      <rect id="window" x="60" y="40" width="200" height="470" rx="8"/>
+      <rect id="panel" x="276" y="40" width="54" height="470" rx="8"/>
+      <rect id="screen" x="291" y="252" width="24" height="30" rx="3"/>
+      <g id="drum" clip-path="url(#win)">
+      <line class="shelf" x1="62" y1="82.0" x2="258" y2="82.0"/>
+      <g class="slots" data-level="1">
+      <line class="slot" x1="98" y1="48.0" x2="98" y2="80.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="48.0" x2="148" y2="80.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="48.0" x2="198" y2="80.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="48.0" x2="248" y2="80.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="129.0" x2="258" y2="129.0"/>
+      <g class="slots" data-level="2">
+      <line class="slot" x1="98" y1="95.0" x2="98" y2="127.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="95.0" x2="148" y2="127.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="95.0" x2="198" y2="127.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="95.0" x2="248" y2="127.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="176.0" x2="258" y2="176.0"/>
+      <g class="slots" data-level="3">
+      <line class="slot" x1="98" y1="142.0" x2="98" y2="174.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="142.0" x2="148" y2="174.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="142.0" x2="198" y2="174.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="142.0" x2="248" y2="174.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="223.0" x2="258" y2="223.0"/>
+      <g class="slots" data-level="4">
+      <line class="slot" x1="98" y1="189.0" x2="98" y2="221.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="189.0" x2="148" y2="221.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="189.0" x2="198" y2="221.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="189.0" x2="248" y2="221.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="270.0" x2="258" y2="270.0"/>
+      <g class="slots" data-level="5">
+      <line class="slot" x1="98" y1="236.0" x2="98" y2="268.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="236.0" x2="148" y2="268.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="236.0" x2="198" y2="268.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="236.0" x2="248" y2="268.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="317.0" x2="258" y2="317.0"/>
+      <g class="slots" data-level="6">
+      <line class="slot" x1="98" y1="283.0" x2="98" y2="315.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="283.0" x2="148" y2="315.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="283.0" x2="198" y2="315.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="283.0" x2="248" y2="315.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="364.0" x2="258" y2="364.0"/>
+      <g class="slots" data-level="7">
+      <line class="slot" x1="98" y1="330.0" x2="98" y2="362.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="330.0" x2="148" y2="362.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="330.0" x2="198" y2="362.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="330.0" x2="248" y2="362.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="411.0" x2="258" y2="411.0"/>
+      <g class="slots" data-level="8">
+      <line class="slot" x1="98" y1="377.0" x2="98" y2="409.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="377.0" x2="148" y2="409.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="377.0" x2="198" y2="409.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="377.0" x2="248" y2="409.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="458.0" x2="258" y2="458.0"/>
+      <g class="slots" data-level="9">
+      <line class="slot" x1="98" y1="424.0" x2="98" y2="456.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="424.0" x2="148" y2="456.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="424.0" x2="198" y2="456.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="424.0" x2="248" y2="456.0" stroke-opacity="0.7"/>
+      </g>
+      <line class="shelf" x1="62" y1="505.0" x2="258" y2="505.0"/>
+      <g class="slots" data-level="10">
+      <line class="slot" x1="98" y1="471.0" x2="98" y2="503.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="148" y1="471.0" x2="148" y2="503.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="198" y1="471.0" x2="198" y2="503.0" stroke-opacity="0.7"/>
+      <line class="slot" x1="248" y1="471.0" x2="248" y2="503.0" stroke-opacity="0.7"/>
+      </g>
+      </g>
+      <g id="doors">
+      <g class="door" data-level="1">
+      <rect class="leaf" x="66" y="45.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="56.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 45.0 L92 41.0 L92 84.0 L66 80.0 Z"/>
+      <rect class="frame" x="66" y="45.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="2">
+      <rect class="leaf" x="66" y="92.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="103.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 92.0 L92 88.0 L92 131.0 L66 127.0 Z"/>
+      <rect class="frame" x="66" y="92.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="3">
+      <rect class="leaf" x="66" y="139.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="150.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 139.0 L92 135.0 L92 178.0 L66 174.0 Z"/>
+      <rect class="frame" x="66" y="139.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="4">
+      <rect class="leaf" x="66" y="186.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="197.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 186.0 L92 182.0 L92 225.0 L66 221.0 Z"/>
+      <rect class="frame" x="66" y="186.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="5">
+      <rect class="leaf" x="66" y="233.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="244.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 233.0 L92 229.0 L92 272.0 L66 268.0 Z"/>
+      <rect class="frame" x="66" y="233.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="6">
+      <rect class="leaf" x="66" y="280.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="291.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 280.0 L92 276.0 L92 319.0 L66 315.0 Z"/>
+      <rect class="frame" x="66" y="280.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="7">
+      <rect class="leaf" x="66" y="327.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="338.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 327.0 L92 323.0 L92 366.0 L66 362.0 Z"/>
+      <rect class="frame" x="66" y="327.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="8">
+      <rect class="leaf" x="66" y="374.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="385.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 374.0 L92 370.0 L92 413.0 L66 409.0 Z"/>
+      <rect class="frame" x="66" y="374.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="9">
+      <rect class="leaf" x="66" y="421.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="432.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 421.0 L92 417.0 L92 460.0 L66 456.0 Z"/>
+      <rect class="frame" x="66" y="421.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      <g class="door" data-level="10">
+      <rect class="leaf" x="66" y="468.0" width="188" height="35.0" rx="2"/>
+      <rect class="handle" x="245" y="479.5" width="4" height="12" rx="1"/>
+      <path class="leaf-open" d="M66 468.0 L92 464.0 L92 507.0 L66 503.0 Z"/>
+      <rect class="frame" x="66" y="468.0" width="188" height="35.0" rx="2" stroke-dasharray="4 5"/>
+      </g>
+      </g>
+      </svg>
     </div>
-    <p>Doors: <span id="doors"></span></p>
-    <p>Purchase: <span id="purchase_id">–</span></p>
-    <p>Motor: <span id="motor"></span></p>
-    <p>LEDs: <span id="leds"></span></p>
-    <p>Audio: <span id="audio"></span></p>
-    <p>Outbox: <span id="outbox"></span> · Purchase server: <span id="purchase_server"></span></p>
-    <pre id="hardware"></pre>
-    <ol id="events" reversed></ol>
-  </aside>
+    <div class="top"><div class="brand"><span id="brand"></span><small id="brand_sub"></small></div><button class="gear" data-gear aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button></div>
+
+    <section data-state="idle" class="body">
+      <button class="tile cream turn" id="turn"><div><b>TURN</b><small>HOLD TO ROTATE</small></div><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="26"/><circle cx="32" cy="32" r="4"/><path d="M32 6v8M32 50v8M6 32h8M50 32h8"/><path d="M48 18a22 22 0 0 1 4 10" stroke-width="3"/><path d="M50 30l3-4 2 5z" fill="currentColor"/></svg></button>
+      <div class="cap" style="padding:4px 2px 0">Select a shelf · scan to pay</div>
+      <div class="levels" id="levels"></div>
+      <div class="hint">Payment currently not possible</div>
+    </section>
+
+    <section data-state="sleep" class="full mid"><div class="cap dim">Tap to wake</div></section>
+
+    <section data-state="checking_purchase" class="body">
+      <div class="tile lv on selected"><span class="level"></span><span class="cap">shelf · selected</span></div>
+      <div class="tile qrwrap">
+        <div class="cap reach" style="align-self:flex-start">Scan with your phone</div>
+        <div class="cap amber unreach" style="align-self:flex-start">Payment currently not possible</div>
+        <div class="qr reach" id="qr"></div>
+        <div class="qr off unreach">Please wait a moment.<br>The payment server is not reachable.</div>
+        <div class="note reach">Pay in the app. The door unlocks by itself, nothing to press here.</div>
+        <div class="note unreach">The code appears as soon as the connection is back.</div>
+      </div>
+      <div class="cd center"></div>
+      <button class="tile btn bottom" id="cancel">Cancel</button>
+    </section>
+
+    <section data-state="door_unlocked" class="full">
+      <div class="cap">Shelf</div><div class="n level"></div><div class="t">is unlocked</div>
+      <div class="s">Open the door and take your product.</div><div class="cd"></div>
+    </section>
+
+    <section data-state="door_opened" class="full">
+      <div class="cap">Shelf</div><div class="n level"></div><div class="t">Take your product</div>
+      <div class="s">Then close the door.</div>
+    </section>
+
+    <section data-state="door_alarm" class="full">
+      <div class="cap">Shelf <span class="level"></span></div><div class="t xl">Please close<br>the door</div>
+      <div class="s">The door has been open for a while.</div>
+    </section>
+
+    <section data-state="door_forced" class="full">
+      <div class="cap">Alarm</div><div class="t xl">Door opened<br>without a purchase</div>
+      <div class="s">Close it. This event is recorded.</div>
+    </section>
+
+    <section data-state="completing" class="full">
+      <div class="cap">Shelf <span class="level"></span></div><div class="t xl">Thank you</div>
+    </section>
+
+    <section data-state="out_of_order" class="full">
+      <div class="cap">Status</div><div class="t xl">Out of order</div>
+      <div class="s" id="reason_line">Technical problem — please try again later.</div>
+    </section>
+  </div>
 
   <div id="settings">
     <section data-screen="S0">
@@ -202,7 +327,7 @@
         <div class="lvl5" id="qr_picker"></div>
         <div class="tile qrwrap">
           <div class="cap" style="align-self:flex-start" id="qr_caption"></div>
-          <div class="qr"><img id="qr_img" alt="QR code" src=""></div>
+          <div class="qr" id="qr_s7"></div>
           <div class="note" id="qr_data"></div>
         </div>
       </div>
@@ -232,7 +357,8 @@
     <div class="toast" id="toast"></div>
   </div>
 
-  <script src="/static/settings.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/customer.js"></script>
+  <script src="/static/settings.js"></script>
 </body>
 </html>
