@@ -1,0 +1,56 @@
+#!/bin/sh
+# Puts the MoniToni services in place on the Pi. Run once, as root, from the clone in
+# /opt/monitoni (docs/SETUP.md §5):
+#   sudo /opt/monitoni/deploy/install.sh
+# Safe to run again: every step looks before it acts and says what it did. In this order:
+#   1. the user monitoni (if missing) and its groups video, input, render, audio
+#   2. the four units copied into /etc/systemd/system, then systemctl daemon-reload
+#   3. systemctl enable for the daemon, the kiosk and the nightly reload timer
+# Nothing is started here; SETUP §7 and §9 do that. Every line is also written out in SETUP.
+set -eu
+
+DEPLOY=$(cd "$(dirname "$0")" && pwd)
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run as root: sudo $0" >&2
+  exit 1
+fi
+if [ "$DEPLOY" != /opt/monitoni/deploy ]; then
+  echo "note: running from $DEPLOY; the units expect the clone at /opt/monitoni"
+fi
+
+# 1. The user. On a fresh card Imager created it (SETUP §2), so it normally exists. The
+#    groups: video, input and render for cage (the display, the touch panel, the GPU), audio
+#    for the daemon's HDMI sound. Which of them are really needed is checked in Part B.
+if id monitoni >/dev/null 2>&1; then
+  echo "user monitoni: exists"
+else
+  useradd --create-home --shell /bin/bash monitoni
+  echo "user monitoni: created without a password (set one with: passwd monitoni)"
+fi
+for group in video input render audio; do
+  if id -nG monitoni | tr ' ' '\n' | grep -qx "$group"; then
+    echo "group $group: monitoni is a member"
+  else
+    usermod -aG "$group" monitoni
+    echo "group $group: monitoni added"
+  fi
+done
+
+# 2. The units. A copy, not a link, so the running system never depends on the clone being
+#    where it was; run this script again after a change to a unit file.
+for unit in monitoni.service monitoni-kiosk.service \
+            monitoni-kiosk-reload.service monitoni-kiosk-reload.timer; do
+  if cmp -s "$DEPLOY/$unit" "/etc/systemd/system/$unit"; then
+    echo "$unit: unchanged"
+  else
+    install -m 644 "$DEPLOY/$unit" /etc/systemd/system/
+    echo "$unit: copied to /etc/systemd/system"
+  fi
+done
+systemctl daemon-reload
+echo "systemd: units reloaded"
+
+# 3. Start at boot. `enable` is quiet when the links exist already.
+systemctl enable monitoni.service monitoni-kiosk.service monitoni-kiosk-reload.timer
+echo "enabled at boot: monitoni, monitoni-kiosk, monitoni-kiosk-reload.timer"
+echo "start them now with: sudo systemctl start monitoni monitoni-kiosk monitoni-kiosk-reload.timer"

@@ -1,0 +1,39 @@
+# The kiosk: cage (a Wayland compositor that shows one program full screen) running Chromium
+# on the touch display, as a system service on tty1. This is cage's documented pattern for
+# starting at boot without anyone logging in. Put in place by deploy/install.sh (docs/SETUP.md
+# §5); `systemctl stop monitoni-kiosk` leaves the daemon running (§9).
+[Unit]
+Description=MoniToni kiosk (cage + Chromium on tty1)
+# the daemon first, so there is a page to show; kiosk.sh waits for it as well. The network
+# target is ordering only: nothing here pulls the network in or needs it.
+After=monitoni.service network-online.target systemd-user-sessions.service
+# tty1 belongs to the kiosk, not to a login prompt
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+ConditionPathExists=/dev/tty1
+
+[Service]
+Type=simple
+User=monitoni
+# a login session for the user through the "login" PAM stack: logind then hands the session
+# the seat (display, touch, keyboard) and sets XDG_RUNTIME_DIR, which cage needs for its socket
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+# fail loudly if tty1 cannot be taken over
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+# /run/monitoni-kiosk: created empty at every start, removed at stop; kiosk.sh keeps
+# Chromium's profile there, so nothing the browser writes survives a restart
+RuntimeDirectory=monitoni-kiosk
+ExecStart=/opt/monitoni/deploy/kiosk.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

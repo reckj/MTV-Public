@@ -1,0 +1,9 @@
+# What the timer runs: a restart of the kiosk service, nothing else. The daemon is not
+# touched; the fresh page reconnects and shows whatever state the machine is in.
+# By hand: sudo systemctl start monitoni-kiosk-reload.service (docs/SETUP.md §9).
+[Unit]
+Description=Restart the MoniToni kiosk browser (nightly reload)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart monitoni-kiosk.service

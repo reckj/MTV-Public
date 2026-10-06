@@ -1,0 +1,29 @@
+# The MoniToni daemon as a system service. Put in place by deploy/install.sh (docs/SETUP.md
+# §5); runs as the user monitoni from the clone in /opt/monitoni; its log is the journal
+# (journalctl -u monitoni -f, §9).
+[Unit]
+Description=MoniToni vending daemon
+# ordering only: the web page is on 127.0.0.1, and the daemon reaches (and keeps retrying)
+# the purchase server and the modules by itself, so nothing on the network is waited for
+After=network.target
+
+[Service]
+Type=simple
+User=monitoni
+Group=monitoni
+WorkingDirectory=/opt/monitoni
+ExecStart=/opt/monitoni/.venv/bin/python -m monitoni
+Restart=always
+RestartSec=5
+# Sounds: pygame/SDL straight to ALSA (Raspberry Pi OS Lite has no PipeWire). AUDIODEV is the
+# ALSA name of the HDMI output as `aplay -L` lists it on the machine.
+# PLACEHOLDER, written ahead of the Pi: the real value is settled in Milestone 8 Part B.
+Environment=SDL_AUDIODRIVER=alsa
+Environment=AUDIODEV=plughw:CARD=vc4hdmi0,DEV=0
+# a clean stop locks the doors, stops the motor and darkens the strip: give it a moment
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

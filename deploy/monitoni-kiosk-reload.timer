@@ -1,0 +1,13 @@
+# The nightly reload of the kiosk browser: 04:00 local time, every night. Put in place and
+# enabled by deploy/install.sh (docs/SETUP.md §5, §9).
+[Unit]
+Description=Restart the MoniToni kiosk browser nightly at 04:00
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+# a missed night (the machine was off) is not caught up: the next 04:00 is soon enough
+Persistent=false
+Unit=monitoni-kiosk-reload.service
+
+[Install]
+WantedBy=timers.target
