@@ -1,0 +1,64 @@
+/* MoniToni UI tokens — design source for app/monitoni/web/static/.
+   Locked 2026-10-06 (design session 1): "Instrument" language, Blueprint surface.
+   Canvas 400×1280 portrait, touch only, dark only. All values in CSS px at 1×. */
+
+:root {
+  /* ---- colour ---- */
+  --ground:        #1a1512;   /* page background, warm near-black */
+  --plate:         #efe4d2;   /* QR plate, inverted TURN on press */
+  --line:          #4a3d33;   /* tile outlines, dividers */
+  --line-strong:   #6b5a4b;   /* pressed/focused outline */
+  --cream:         #efe4d2;   /* primary text, TURN outline */
+  --cream-dim:     #a8998a;   /* captions, secondary text */
+  --amber:         #e9a23b;   /* the one accent: selected, active, highlight */
+  --alert:         #ef5a6a;   /* alarms, faults, unreachable */
+  --ok:            #8fae7a;   /* healthy, delivered */
+  --alert-ground:  #5a1f26;   /* full-bleed ground of C6/C7 */
+
+  /* ---- type (all OFL, bundled under static/fonts/, never loaded from the network) ---- */
+  --font-display:  "Sora", system-ui, sans-serif;          /* numbers, titles, TURN */
+  --font-ui:       "Geist", system-ui, sans-serif;         /* sentences, rows */
+  --font-mono:     "Geist Mono", ui-monospace, monospace;  /* captions, labels, footers */
+  --font-dot:      "Doto", "Geist Mono", monospace;        /* live readouts: countdown, problem line */
+
+  --t-brand:    26px;  /* MONITONI wordmark, 700, tracking .18em */
+  --t-num-xl:  230px;  /* the shelf number on C4/C5, 700 */
+  --t-num-l:    44px;  /* selected-shelf tile on C3 */
+  --t-num:      38px;  /* level tiles, 600, tabular */
+  --t-title:    46px;  /* "is unlocked", "Please close the door", 600 */
+  --t-turn:     46px;  /* TURN, 700, tracking .06em */
+  --t-body:     25px;  /* customer sentences, cream-dim */
+  --t-row:      26px;  /* settings rows, 500 */
+  --t-button:   28px;  /* Cancel and settings buttons, 600 */
+  --t-cap:      17px;  /* captions, mono, uppercase, tracking .06em */
+  --t-cap-s:    15px;  /* small captions in tiles and footers */
+  --t-dot-l:    54px;  /* countdown */
+  --t-dot-m:    21px;  /* problem line on S1 */
+
+  /* ---- shape ---- */
+  --r-tile:   22px;
+  --r-plate:  14px;
+  --r-pill:   999px;
+  --stroke:          1.5px;
+  --stroke-active:   2.5px;
+
+  /* ---- layout ---- */
+  --gutter:    24px;   /* side padding of every screen */
+  --gap:       14px;   /* between tiles and blocks */
+  --gap-s:      9px;   /* between level tiles */
+  --h-top:     92px;   /* top bar */
+  --h-tile:    74px;   /* level tile */
+  --h-turn:   118px;
+  --h-row:     72px;   /* settings row */
+  --h-button:  84px;   /* Cancel, Lock all, Test server */
+  --h-key:     96px;   /* PIN keypad key */
+  --touch-min: 56px;   /* nothing pressable is smaller */
+
+  /* ---- micrographics ---- */
+  --dot-grid:  radial-gradient(var(--line) 1.4px, transparent 1.6px);
+  --dot-size:  22px;
+
+  /* ---- motion (kiosk: short, no bounce; respect prefers-reduced-motion) ---- */
+  --t-fast:   120ms;
+  --t-slow:   400ms;
+}
