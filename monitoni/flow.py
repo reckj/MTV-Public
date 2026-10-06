@@ -213,13 +213,11 @@ class Flow:
         """
         async with self._lock:
             if event is Event.TOUCH and self.state is not State.SLEEP:
-                # accepted everywhere; idle and settings have an inactivity timer to restart
+                # a keepalive: accepted everywhere, never logged (the page sends one per
+                # pointerdown); idle and settings have an inactivity timer to restart
                 if self.state in (State.IDLE, State.SETTINGS):
                     self._exit_pending = False
                     self._start_timeout(self.state)
-                if self.state is not State.SETTINGS:  # there, every pointerdown is a touch
-                    await self.events.write("command", self.state.value,
-                                            details={"event": "touch"})
                 return
             if event is Event.HARDWARE_FAULT and self.state is State.OUT_OF_ORDER:
                 # already there; a maintenance reason is kept
@@ -491,9 +489,11 @@ class Flow:
                                 details={"event": "relocked"})
 
     async def _complete(self) -> None:
-        """completing has nothing left to do: `close` was queued on the way in. Finish, unless a
-        report of this vend was lost: then the machine stops vending until someone looks."""
+        """completing has nothing left to do: `close` was queued on the way in. "Thank you" stays
+        for thank_you_s, then the vend is finished. A lost report of this vend ends it at once:
+        the machine stops vending until someone looks."""
         if self._report_lost:
             await self.dispatch(Event.DATABASE_FAULT, error="a report could not be queued")
-        else:
-            await self.dispatch(Event.COMPLETE)
+            return
+        await asyncio.sleep(self.config.vending.timings.thank_you_s)
+        await self.dispatch(Event.COMPLETE)

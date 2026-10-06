@@ -140,11 +140,13 @@ async def test_select_level_out_of_range(make_flow):
     assert flow.state is State.IDLE
 
 
-async def test_touch_outside_sleep_is_accepted(make_flow):
+async def test_touch_outside_sleep_is_accepted_and_never_logged(make_flow):
     flow = await make_flow()
     await to_door_unlocked(flow)
+    before = len(await flow.events.recent(100))
     await flow.dispatch(Event.TOUCH)
     assert flow.state is State.DOOR_UNLOCKED
+    assert len(await flow.events.recent(100)) == before  # a keepalive, not a command
 
 
 async def test_touch_in_idle_resets_sleep_timer(make_flow):
@@ -153,6 +155,7 @@ async def test_touch_in_idle_resets_sleep_timer(make_flow):
     await flow.dispatch(Event.TOUCH)
     await asyncio.sleep(0.06)
     assert flow.state is State.IDLE  # would have slept at 0.1 without the touch
+    assert not [r for r in await flow.events.recent(20) if r["kind"] == "command"]
     await wait_for(flow, State.SLEEP)
 
 
@@ -603,8 +606,36 @@ async def test_a_bug_in_the_purchase_client_keeps_the_poll_going(make_flow, capl
 
 # -- a report the outbox cannot store ---------------------------------------------------
 
+async def test_thank_you_stays_thank_you_s_then_the_vend_is_done(make_flow):
+    flow = await make_flow(thank_you_s=0.3)
+    await to_door_unlocked(flow, level=2)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    started = asyncio.get_running_loop().time()
+    assert flow.state is State.COMPLETING and flow.status()["countdown_s"] is None
+    await wait_until(lambda: flow.purchase.reports == ["complete", "close"], "reports")
+    await asyncio.sleep(0.15)
+    assert flow.state is State.COMPLETING  # the reports are in; "Thank you" is still up
+    await wait_for(flow, State.IDLE)
+    assert asyncio.get_running_loop().time() - started >= 0.28
+    assert_all_locked(flow)
+
+
+async def test_a_fault_while_thank_you_is_up_cancels_the_wait(make_flow):
+    flow = await make_flow(thank_you_s=0.2)
+    await to_door_unlocked(flow, level=2)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await flow.dispatch(Event.HARDWARE_FAULT, error="relay_core: gone")
+    assert flow.state is State.OUT_OF_ORDER
+    await asyncio.sleep(0.3)
+    assert flow.state is State.OUT_OF_ORDER
+    # no stray COMPLETE: the wait was cancelled with the state
+    assert not [r for r in await flow.events.recent(50) if r["kind"] == "rejected"]
+
+
 async def test_a_lost_report_ends_the_vend_out_of_order(make_flow, monkeypatch, caplog):
-    flow = await make_flow()
+    flow = await make_flow(thank_you_s=10.0)  # the fault does not wait for "Thank you"
 
     async def refuse(kind, level):
         raise RuntimeError("database is locked")
@@ -730,7 +761,7 @@ async def test_settings_time_out_and_a_touch_restarts_the_timer(make_flow):
     await wait_for(flow, State.IDLE)
     rows = await flow.events.recent(10)
     assert [r["kind"] for r in rows if r["kind"] in ("timeout", "command")] == ["timeout"]
-    # touches in settings write no command row (one per pointerdown would flood the log)
+    # a touch writes no row anywhere (the page sends one per pointerdown)
 
 
 async def test_door_events_in_settings_are_status_only(make_flow):
