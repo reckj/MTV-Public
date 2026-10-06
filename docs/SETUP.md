@@ -36,12 +36,15 @@ Facts so far (no network step has been performed on a Pi yet):
 
 - The relay modules are on the local subnet with static IPs (§6); the machine
   must reach them directly.
-- From the internet the daemon needs exactly one thing: HTTPS (or HTTP, as
-  configured) to `purchase_server.base_url`, for purchase checks and
-  completions. Nothing else is contacted: no updates, no telemetry.
+- From the internet the daemon needs exactly one destination:
+  `https://monitoni.zhdk.ch` (`purchase_server.base_url`), for the permission
+  poll and the complete/close reports. Nothing else is contacted: no updates,
+  no telemetry. HTTPS verification needs a roughly correct clock; NTP and the
+  Pi 5's RTC battery belong to the Pi milestone (_to be written_).
 - Without the purchase server the machine keeps running: customers can browse,
-  the page says "Payment server not reachable", payments cannot be verified,
-  and completions wait in the outbox until the server answers again.
+  the page says "Payment server not reachable" in idle and "Payment currently
+  not possible — please wait" instead of a QR code, and the reports of vends
+  that already happened wait in the outbox until the server answers again.
 
 _Configuring the Pi's network: to be written during integration._
 
@@ -79,7 +82,8 @@ Keys an installer must set in `config/local.yaml` so far (copy
 `config/local.yaml.example` as a start; every key not listed keeps its value
 from `config/default.yaml`):
 
-- `system.machine_id` — this machine's id, sent with every purchase check.
+- `system.machine_id` — a label for the log and the status page; the server
+  identifies the machine by its token, not by this.
 - `hardware.relay_core.host`, `hardware.relay_levels.host`,
   `hardware.wled.ip_address` — the modules' IP addresses.
 - `hardware.door_locks.channels` — the `relay_levels` channel for level 1,
@@ -90,9 +94,11 @@ from `config/default.yaml`):
   counts. Confirm against the wiring.
 - `hardware.motor.motor_channel`, `spindle_channel` — the `relay_core`
   channels for the motor and the spindle lock. Confirm against the wiring.
-- `purchase_server.base_url` — where purchases are verified. Mandatory on a
-  real machine: the default points at localhost and will only ever show
-  "Payment server not reachable".
+- `purchase_server.token` — this machine's token, mandatory. It comes from the
+  machine's device page in the Monitoni admin; Cubera creates it when the
+  machine is registered. Keep `local.yaml` private, the token is the machine's
+  identity. `purchase_server.base_url` normally stays at the default
+  `https://monitoni.zhdk.ch`.
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). Generated PNGs land
   in `data/qr/`; delete a file there to regenerate it after changing the
@@ -148,13 +154,15 @@ and the door sensor has been reading for 10 seconds without a break. A module
 that drops out during operation has the same effect. "Reason: maintenance" (from `system.maintenance_mode`) never clears
 itself.
 
-The page shows "Payment server not reachable" in `idle` and while a QR code
-is shown whenever the last request to the purchase server failed; it goes away
-with the next successful request. "Purchase rejected" appears briefly when the
-server answered that a scanned purchase is not valid. In the dev panel,
-"Outbox: N pending" is the number of purchase completions the server has not
-accepted yet; they are retried after 1, 2, 5, 15 and then every 60 seconds and
-survive a restart.
+"Payment server not reachable" in `idle`, and "Payment currently not
+possible — please wait" instead of the QR code after a level was selected, mean
+the last request to the Monitoni server failed. Check the network, then
+`/api/status`: under `purchase_server`, `last_error` names the cause. `HTTP 401`
+is a wrong or missing `purchase_server.token`; a connect error or timeout is
+the network or the server. The messages go away with the next successful
+request. In the dev panel, "Outbox: N pending" is the number of `complete` and
+`close` reports the server has not accepted yet; they are retried after 1, 2,
+5, 15 and then every 60 seconds and survive a restart.
 
 _Real hardware start on a Pi: to be written during integration._
 
