@@ -34,7 +34,6 @@ function render(status) {
   document.body.dataset.hardware = status.hardware_mode;
   document.body.dataset.purchase = status.purchase_mode;
   document.body.dataset.reachable = String(status.purchase_server.reachable);
-  document.body.dataset.lastResult = status.last_result ?? "";
 
   const qr = $("qr");
   const src = status.qr_url ?? "";

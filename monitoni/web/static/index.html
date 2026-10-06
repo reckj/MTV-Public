@@ -17,7 +17,6 @@
     <section data-state="idle">
       <h1>Select a level</h1>
       <p class="net_hint">Payment server not reachable</p>
-      <p id="rejected">Purchase rejected</p>
       <div id="levels" class="levels"></div>
       <button id="turn">TURN</button>
     </section>
@@ -28,9 +27,9 @@
 
     <section data-state="checking_purchase">
       <h1>Scan to pay</h1>
-      <p class="net_hint">Payment server not reachable</p>
       <p>Level <span class="selected_level"></span></p>
       <img id="qr" alt="QR code" src="">
+      <p id="no_payment">Payment currently not possible — please wait</p>
       <button data-command="cancel">Cancel</button>
     </section>
 

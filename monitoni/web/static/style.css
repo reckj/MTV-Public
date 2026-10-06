@@ -83,10 +83,13 @@ body[data-motor="running"] #turn { background: #222; color: #e8503a; }
 
 #reason { color: #f90; }
 
-/* purchase server: hint while unreachable, flash after a rejected purchase */
-.net_hint, #rejected { display: none; margin: 0 0 12px; }
+/* purchase server: hint in idle while unreachable; the QR only while reachable (a payment
+   the server never sees would expire unredeemed) */
+.net_hint { display: none; margin: 0 0 12px; }
 body[data-reachable="false"] .net_hint { display: block; color: #f90; }
-body[data-last-result="invalid"] #rejected { display: block; color: #f55; font-weight: bold; }
+#no_payment { display: none; margin: 16px 0; min-height: 280px; color: #f90; font-size: 24px; }
+body:not([data-reachable="true"]) #qr { display: none; }
+body:not([data-reachable="true"]) #no_payment { display: block; }
 body[data-reason="hardware"] #maintenance_message { display: none; }  /* that text is for maintenance only */
 
 #qr {

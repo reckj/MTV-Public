@@ -14,8 +14,8 @@ from tests.conftest import http_purchase
 from tests.helpers import command, events, status, wait_for_state, wait_until
 
 STATUS_KEYS = {"machine_id", "hardware_mode", "purchase_mode", "uptime_s", "state", "reason",
-               "last_result", "selected_level", "purchase_id", "levels", "doors", "countdown_s",
-               "qr_url", "maintenance_message", "hardware", "motor", "purchase_server"}
+               "selected_level", "purchase_id", "levels", "doors", "countdown_s", "qr_url",
+               "maintenance_message", "hardware", "motor", "purchase_server"}
 
 
 class FailingMotor(MockHardware):
@@ -57,7 +57,7 @@ async def test_status_endpoint(client, daemon):
     body = await status(client, daemon)
     assert set(body) == STATUS_KEYS
     assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
-    assert body["purchase_mode"] == "mock" and body["last_result"] is None
+    assert body["purchase_mode"] == "mock"
     assert body["purchase_server"] == {"reachable": True, "last_ok": None, "last_error": None,
                                        "outbox_pending": 0}
     assert body["levels"] == 10 and set(body["doors"]) == {str(n) for n in range(1, 11)}
@@ -100,8 +100,8 @@ async def test_happy_path(client, daemon):
     transitions = [r["details"]["to"] for r in reversed(rows) if r["kind"] == "transition"]
     assert transitions == ["checking_purchase", "door_unlocked", "door_opened",
                            "completing", "idle"]
-    assert {r["kind"] for r in rows} >= {"daemon", "dev", "hardware", "purchase_check",
-                                         "purchase_complete"}
+    assert {r["kind"] for r in rows} >= {"daemon", "dev", "hardware", "purchase_check", "outbox"}
+    await wait_until(lambda: daemon.purchase.reports == ["complete", "close"], "reports")
 
 
 async def test_door_alarm_path(client, make_daemon):
@@ -175,7 +175,7 @@ async def test_forced_door_path(client, daemon):
     rows = await events(client, daemon)
     assert [r["details"]["to"] for r in reversed(rows) if r["kind"] == "transition"] == [
         "door_forced", "idle"]
-    assert not [r for r in rows if r["kind"] == "purchase_complete"]
+    assert not [r for r in rows if r["kind"] == "outbox"]
 
 
 async def test_qr_png(client, daemon):
@@ -368,8 +368,11 @@ async def test_http_purchase_server_in_the_status_and_the_log(client, make_daemo
     assert body["purchase_mode"] == "real" and body["purchase_server"]["reachable"] is None
     await command(client, daemon, command="select_level", level=2)
     await wait_until(lambda: purchase_fake.requests, "first poll")
+    assert purchase_fake.requests[0] == {"method": "GET", "path": "/api/vending/permission",
+                                         "token_ok": True, "body": b""}
     body = await status(client, daemon)
     assert body["purchase_server"]["reachable"] is True and body["purchase_server"]["last_ok"]
+    assert "token" not in body["purchase_server"] and "test-token" not in str(body)
     rows = [r["details"] for r in await events(client, daemon) if r["kind"] == "network"]
     assert rows == [{"purchase_server": "reachable", "error": None}]
     code, body = await command(client, daemon, command="simulate_payment")
@@ -385,20 +388,10 @@ async def test_unreachable_purchase_server_keeps_polling_and_logs_once(client, m
     body = await status(client, daemon)
     assert body["state"] == "checking_purchase"
     assert body["purchase_server"]["reachable"] is False
-    assert body["purchase_server"]["last_error"] == "HTTP 500 from /api/purchase/check"
-    purchase_fake.pay(1, purchase_id="p-77")
+    assert body["purchase_server"]["last_error"] == "HTTP 500 from /api/vending/permission"
+    purchase_fake.pay(1)
     body = await wait_for_state(client, daemon, "door_unlocked")
-    assert body["purchase_id"] == "p-77" and body["purchase_server"]["reachable"] is True
+    assert body["selected_level"] == 1 and body["purchase_server"]["reachable"] is True
     rows = [r["details"]["purchase_server"] for r in reversed(await events(client, daemon))
             if r["kind"] == "network"]
     assert rows == ["unreachable", "reachable"]
-
-
-async def test_rejected_purchase_shows_in_the_status(client, make_daemon, purchase_fake):
-    daemon = await make_daemon(purchase_fake=purchase_fake)
-    purchase_fake.mark_invalid(3)
-    await command(client, daemon, command="select_level", level=3)
-    body = await wait_for_state(client, daemon, "idle")
-    assert body["last_result"] == "invalid"
-    code, body = await command(client, daemon, command="select_level", level=4)
-    assert code == 200 and body["last_result"] is None
