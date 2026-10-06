@@ -302,7 +302,7 @@ function phrase(r) {
     case "timeout": return `Timeout · ${r.state.replace("_", " ")}`;
     case "rejected": return `Refused · ${d.event}`;
     case "command": return d.tool ? `Settings · ${d.tool}${d.accepted === false ? " refused" : ""}` : `Touch`;
-    case "motor": return d.event === "start" ? "Motor started" : `Motor stopped · ${d.reason}`;
+    case "motor": return d.event === "start" ? "Motor started" : d.event === "spindle" ? `Spindle lock ${d.open ? "opened" : "closed"}` : `Motor stopped · ${d.reason.replace("_", " ")}`;
     case "daemon": return d.event === "start" ? "Daemon started" : "Daemon stopped";
     case "dev": return `Simulation · ${d.command}`;
     default: return r.kind;
