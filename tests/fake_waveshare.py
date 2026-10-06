@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 
 from monitoni.hardware.modbus import (
     ALL_COILS,
@@ -136,6 +137,17 @@ class FakeWaveshare:
     def _exception(self, fc: int, code: int) -> bytes:
         return with_crc(bytes((self.slave_address, fc | EXCEPTION_FLAG, code)))
 
+    async def watch_inputs(self, path: Path) -> None:
+        """Manual runs: every 100 ms the file's characters set the inputs; "1" = high, DI1 first."""
+        while True:
+            try:
+                bits = path.read_text().strip()
+            except OSError:
+                bits = ""
+            for i, ch in enumerate(bits[:len(self.inputs)]):
+                self.inputs[i] = ch == "1"
+            await asyncio.sleep(0.1)
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="fake Waveshare Modbus module for manual runs")
@@ -143,6 +155,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--coils", type=int, default=8)
     parser.add_argument("--inputs", type=int, default=8)
     parser.add_argument("--slave", type=int, default=1)
+    parser.add_argument("--inputs-file", type=Path,
+                        help='text file polled every 100 ms; "1" means DI1 high, "01" DI2 high, …')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
@@ -151,6 +165,8 @@ def main(argv: list[str] | None = None) -> None:
         await fake.start(port=args.port)
         log.info("fake Waveshare: %d coils, %d inputs, slave %d, listening on 127.0.0.1:%d",
                  args.coils, args.inputs, args.slave, fake.port)
+        if args.inputs_file is not None:
+            asyncio.create_task(fake.watch_inputs(args.inputs_file))
         await asyncio.Event().wait()
 
     asyncio.run(run())

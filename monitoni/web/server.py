@@ -97,19 +97,21 @@ async def api_command(request: web.Request) -> web.Response:
                 await daemon.motor.press()
             else:
                 await daemon.motor.release()
-        elif command in ("simulate_payment", "simulate_door"):
+        elif command == "simulate_payment":
+            if not daemon.purchase_is_mock:
+                return error(403, "payments can only be simulated with the mock purchase server")
+            level = daemon.flow.selected_level
+            if level is None:
+                return error(409, "no level selected")
+            daemon.purchase.simulate_payment(level)
+            await daemon.events.write("dev", daemon.flow.state.value, level=level, details=body)
+        elif command == "simulate_door":
             if daemon.config.hardware.mode != "mock":
-                return error(403, "simulate commands are only available in mock mode")
-            if command == "simulate_payment":
-                level = daemon.flow.selected_level
-                if level is None:
-                    return error(409, "no level selected")
-                daemon.purchase.simulate_payment(level)
-            else:
-                open_ = body.get("open")
-                if not isinstance(open_, bool):
-                    return error(400, "open must be true or false")
-                daemon.hardware.simulate_door(open_)
+                return error(403, "the door can only be simulated with mock hardware")
+            open_ = body.get("open")
+            if not isinstance(open_, bool):
+                return error(400, "open must be true or false")
+            daemon.hardware.simulate_door(open_)
             await daemon.events.write("dev", daemon.flow.state.value,
                                       level=daemon.flow.selected_level, details=body)
         else:

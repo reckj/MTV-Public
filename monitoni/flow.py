@@ -4,6 +4,8 @@ Transitions are a table. One timeout at a time, cancelled on every transition.
 All hardware side effects live in `_enter` and `_leave`; `unlock_door` is called
 from exactly one place, every lock goes through the idle/out_of_order hook.
 A hardware error inside a hook ends in out_of_order with reason "hardware".
+A door opened while none should be open (idle, sleep, checking_purchase) is
+door_forced: alarm on until the door is closed, no timeout, no purchase completion.
 """
 
 import asyncio
@@ -27,6 +29,7 @@ class State(StrEnum):
     DOOR_UNLOCKED = "door_unlocked"
     DOOR_OPENED = "door_opened"
     DOOR_ALARM = "door_alarm"
+    DOOR_FORCED = "door_forced"
     COMPLETING = "completing"
     OUT_OF_ORDER = "out_of_order"
 
@@ -65,6 +68,11 @@ TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.DOOR_OPENED, Event.TIMEOUT): State.DOOR_ALARM,
     (State.DOOR_ALARM, Event.DOOR_CLOSED): State.COMPLETING,
     (State.COMPLETING, Event.COMPLETE): State.IDLE,
+    # a door opened without a purchase: alarm until it is closed; out_of_order keeps rejecting it
+    (State.IDLE, Event.DOOR_OPENED): State.DOOR_FORCED,
+    (State.SLEEP, Event.DOOR_OPENED): State.DOOR_FORCED,
+    (State.CHECKING_PURCHASE, Event.DOOR_OPENED): State.DOOR_FORCED,
+    (State.DOOR_FORCED, Event.DOOR_CLOSED): State.IDLE,
     # recovery from a hardware fault; dispatch() rejects it while the reason is maintenance
     (State.OUT_OF_ORDER, Event.HARDWARE_OK): State.IDLE,
 }
@@ -236,7 +244,7 @@ class Flow:
         await self._enter(State.OUT_OF_ORDER)  # never raises
 
     async def _leave(self, state: State) -> None:
-        if state is State.DOOR_ALARM:
+        if state in (State.DOOR_ALARM, State.DOOR_FORCED):
             await self.hardware.alarm(False)
 
     async def _enter(self, state: State) -> None:
@@ -261,7 +269,7 @@ class Flow:
         elif state is State.DOOR_UNLOCKED:
             await self.hardware.unlock_door(self.selected_level)
             # hook: LED level highlight + success sound (later milestone)
-        elif state is State.DOOR_ALARM:
+        elif state in (State.DOOR_ALARM, State.DOOR_FORCED):
             await self.hardware.alarm(True)
             # hook: alarm sound + LED flash (later milestone)
         elif state is State.COMPLETING:

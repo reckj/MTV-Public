@@ -31,6 +31,8 @@ function render(status) {
   document.body.dataset.reason = status.reason ?? "";
   $("purchase_id").textContent = status.purchase_id ?? "–";
   document.body.dataset.motor = status.motor.running ? "running" : status.motor.pressed ? "pressed" : "";
+  document.body.dataset.hardware = status.hardware_mode;
+  document.body.dataset.purchase = status.purchase_mode;
 
   const qr = $("qr");
   const src = status.qr_url ?? "";
@@ -48,7 +50,7 @@ function render(status) {
   }
 
   const dev = $("dev");
-  dev.hidden = status.hardware_mode !== "mock";
+  dev.hidden = status.hardware_mode !== "mock" && status.purchase_mode !== "mock";
   if (!dev.hidden) {
     $("doors").textContent = Object.entries(status.doors)
       .map(([n, s]) => `${n}:${s === "locked" ? "🔒" : s === "unlocked" ? "🔓" : "?"}`).join(" ");

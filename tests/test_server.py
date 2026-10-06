@@ -12,9 +12,9 @@ from monitoni.purchase import MockPurchaseServer
 from monitoni.web.server import qr_data
 from tests.helpers import command, events, status, wait_for_state, wait_until
 
-STATUS_KEYS = {"machine_id", "hardware_mode", "uptime_s", "state", "reason", "selected_level",
-               "purchase_id", "levels", "doors", "countdown_s", "qr_url", "maintenance_message",
-               "hardware", "motor"}
+STATUS_KEYS = {"machine_id", "hardware_mode", "purchase_mode", "uptime_s", "state", "reason",
+               "selected_level", "purchase_id", "levels", "doors", "countdown_s", "qr_url",
+               "maintenance_message", "hardware", "motor"}
 
 
 class FailingMotor(MockHardware):
@@ -29,12 +29,13 @@ async def make_daemon(make_config):
     started = []
 
     async def _make(mode: str = "mock", hardware_cls=MockHardware, maintenance: bool = False,
-                    **timings: float) -> Daemon:
+                    dwell: float = 0.05, **timings: float) -> Daemon:
         config = make_config(**timings)
         config.hardware.mode = mode
         config.system.maintenance_mode = maintenance
         daemon = Daemon(config, hardware_cls(config.vending.levels), MockPurchaseServer())
         daemon.recovery_check_s = 0.02
+        daemon.recovery_dwell_s = dwell
         await daemon.start()
         started.append(daemon)
         return daemon
@@ -53,6 +54,7 @@ async def test_status_endpoint(client, daemon):
     body = await status(client, daemon)
     assert set(body) == STATUS_KEYS
     assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
+    assert body["purchase_mode"] == "mock"
     assert body["levels"] == 10 and set(body["doors"]) == {str(n) for n in range(1, 11)}
     assert body["hardware"]["mode"] == "mock" and body["motor"]["running"] is False
     assert set(body["doors"].values()) == {"locked"}
@@ -143,14 +145,32 @@ async def test_malformed_commands(client, daemon):
     assert (await status(client, daemon))["state"] == "idle"
 
 
-async def test_simulate_commands_forbidden_outside_mock_mode(client, make_daemon):
+async def test_simulate_door_needs_mock_hardware_but_payment_only_the_mock_purchase_server(
+        client, make_daemon):
     daemon = await make_daemon(mode="real")
-    code, _ = await command(client, daemon, command="simulate_payment")
-    assert code == 403
-    code, _ = await command(client, daemon, command="simulate_door", open=True)
-    assert code == 403
+    code, body = await command(client, daemon, command="simulate_door", open=True)
+    assert code == 403 and "mock hardware" in body["error"]
     code, body = await command(client, daemon, command="select_level", level=1)
-    assert code == 200 and body["hardware_mode"] == "real"
+    assert code == 200 and body["hardware_mode"] == "real" and body["purchase_mode"] == "mock"
+    code, _ = await command(client, daemon, command="simulate_payment")
+    assert code == 200
+    await wait_for_state(client, daemon, "door_unlocked")
+
+
+async def test_forced_door_path(client, daemon):
+    code, _ = await command(client, daemon, command="simulate_door", open=True)
+    assert code == 200
+    body = await wait_for_state(client, daemon, "door_forced")
+    assert body["countdown_s"] is None and daemon.hardware.status()["alarm"] is True
+    code, _ = await command(client, daemon, command="select_level", level=2)
+    assert code == 409
+    await command(client, daemon, command="simulate_door", open=False)
+    body = await wait_for_state(client, daemon, "idle")
+    assert daemon.hardware.status()["alarm"] is False and set(body["doors"].values()) == {"locked"}
+    rows = await events(client, daemon)
+    assert [r["details"]["to"] for r in reversed(rows) if r["kind"] == "transition"] == [
+        "door_forced", "idle"]
+    assert not [r for r in rows if r["kind"] == "purchase_complete"]
 
 
 async def test_qr_png(client, daemon):
@@ -299,6 +319,32 @@ async def test_hardware_fault_and_recovery(client, daemon):
     assert fault and fault[0]["details"]["error"].startswith("relay_core:")
     transitions = [r["details"]["event"] for r in reversed(rows) if r["kind"] == "transition"]
     assert transitions == ["hardware_fault", "hardware_ok"]
+
+
+async def test_recovery_waits_for_the_dwell(client, make_daemon):
+    daemon = await make_daemon(dwell=0.3)
+    daemon.hardware.is_healthy = False
+    daemon.hardware.events.put_nowait(HardwareFault("relay_core: gone"))
+    await wait_for_state(client, daemon, "out_of_order")
+    daemon.hardware.is_healthy = True
+    await asyncio.sleep(0.15)
+    assert (await status(client, daemon))["state"] == "out_of_order"  # healthy, but not long enough
+    await wait_for_state(client, daemon, "idle")
+
+
+async def test_a_blip_inside_the_dwell_restarts_it(client, make_daemon):
+    daemon = await make_daemon(dwell=0.3)
+    daemon.hardware.is_healthy = False
+    daemon.hardware.events.put_nowait(HardwareFault("relay_core: gone"))
+    await wait_for_state(client, daemon, "out_of_order")
+    daemon.hardware.is_healthy = True
+    await asyncio.sleep(0.2)
+    daemon.hardware.is_healthy = False  # one unhealthy check
+    await asyncio.sleep(0.05)
+    daemon.hardware.is_healthy = True
+    await asyncio.sleep(0.2)  # 0.45 s after the first healthy check, 0.2 s after the blip
+    assert (await status(client, daemon))["state"] == "out_of_order"
+    await wait_for_state(client, daemon, "idle")
 
 
 async def test_no_recovery_attempt_while_in_maintenance(client, make_daemon):

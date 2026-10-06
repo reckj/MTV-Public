@@ -108,13 +108,15 @@ cd monitoni
 Then open http://127.0.0.1:8080/ in a browser. The page shows the current
 state in the header with a green "connected" badge, level buttons 1 to 10 in
 `idle`, the QR code and a cancel button after selecting a level, the door
-instructions while a door is open, a red screen when the door alarm is on and
-a dark screen in sleep (tap to wake). Because hardware mode is `mock`, a dev
-panel at the bottom offers "Simulate payment", "Door open" and "Door close"
-and lists the last 20 events. Walk the flow: select a level, simulate payment,
-door open, door close, back to idle. Every step is written to
-`data/monitoni.db`. Stop the daemon with Ctrl+C; it logs "shutdown requested"
-and exits.
+instructions while a door is open, a red screen when the door alarm is on or
+a door was opened without a purchase, and a dark screen in sleep (tap to
+wake). A dev panel at the bottom offers "Simulate payment" (as long as the
+purchase server is the built-in mock, which is every mode until the real
+client exists) and, with mock hardware, "Door open" and "Door close"; it shows
+the hardware status object and lists the last 20 events. Walk the flow:
+select a level, simulate payment, door open, door close, back to idle. Every
+step is written to `data/monitoni.db`. Stop the daemon with Ctrl+C; it logs
+"shutdown requested" and exits.
 
 In `idle` the page also shows a big TURN button: hold it to run the motor
 (spindle lock opens first); it stops on release and after `max_run_s`
@@ -125,9 +127,9 @@ Starting without `--mock` while `hardware.mode` is `real` refuses to run if
 a module is unreachable: the page shows "Out of order" with "Reason:
 hardware", and `/api/status` lists both modules under `hardware` with
 `connected` and `last_error`. The daemon reconnects every 2, 5, 10, then
-30 seconds and returns to `idle` by itself once both modules answer and the
-door sensor reads. A module that drops out during operation has the same
-effect. "Reason: maintenance" (from `system.maintenance_mode`) never clears
+30 seconds and returns to `idle` by itself once both modules have answered
+and the door sensor has been reading for 10 seconds without a break. A module
+that drops out during operation has the same effect. "Reason: maintenance" (from `system.maintenance_mode`) never clears
 itself.
 
 _Real hardware start on a Pi: to be written during integration._

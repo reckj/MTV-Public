@@ -22,10 +22,9 @@ for years: pinned versions, frozen OS image, no auto-updates.
 
 - `make dev` — create `.venv` if missing, install pinned requirements, run
   `python -m monitoni --mock`. UI at http://127.0.0.1:8080/.
-- `make test` — pytest.
-- `make lint` — ruff.
-- `.venv/bin/python -m tests.fake_waveshare --port 15020 --coils 8` — a fake
-  module for running real mode on a laptop (start one per module).
+- `make test` — pytest. `make lint` — ruff.
+- `.venv/bin/python -m tests.fake_waveshare --port N --coils 8` — a fake
+  module for real mode on a laptop, one per module (`--inputs-file` for the DI).
 
 ## Folder layout
 
@@ -47,9 +46,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - One way to do each thing. Prefer deleting over abstracting. No retry
   wrappers, no plugin systems, no abstract base classes beyond the one
   hardware protocol.
-- Config validation errors name the offending key.
 - `default.yaml` is the production configuration; development always runs with
-  `--mock`.
+  `--mock`. Config validation errors name the offending key.
 - Door lock rule: every entry into `idle` or `out_of_order` locks all doors in
   the one entry hook; `unlock_door` is called from exactly one place
   (`door_unlocked` entry). Nothing locks "on the way".
@@ -58,9 +56,12 @@ for years: pinned versions, frozen OS image, no auto-updates.
   what was sent. Relay ON = unlocked; relay OFF or power loss = locked.
 - Error policy: a `HardwareError` in an entry hook, a lost module connection
   or a failed door poll puts the flow into `out_of_order (hardware)`; it
-  returns to `idle` by itself once both modules are connected and the door
-  sensor reads. `maintenance` never clears itself. No command is retried; the
-  motor's emergency OFF after a failed sequence is the one second write.
+  returns to `idle` by itself once the hardware has been healthy (modules
+  connected, door sensor reading) for `recovery_dwell_s` = 10 s without a
+  break. `maintenance` never clears itself. No command is retried; the motor's
+  emergency OFF after a failed sequence is the one second write.
+- Hardware stop switches nothing: relays keep their state until the next
+  start locks all doors; power loss locks by wiring.
 - Motor stop rule: the motor stops on release, after `max_run_s`, on leaving
   `idle`, when the last WebSocket closes and on daemon stop.
 - Commands come in over `POST /api/command`; status goes out over the
@@ -73,17 +74,16 @@ for years: pinned versions, frozen OS image, no auto-updates.
 
 - Customer screen: select level → QR code → purchase verified against
   purchase server → door unlocked → door monitored → idle.
-- Sleep mode, out-of-order / maintenance mode, door alarm, local SQLite
-  event log.
+- Sleep mode, out-of-order / maintenance mode, door alarm (incl. a door
+  opened without a purchase), local SQLite event log.
 - PIN-protected settings/debug area with per-component test tools: relays,
   motor, LEDs, sensors, audio, network, stats/logs.
 - QR code management.
 - Mock hardware mode for development on a laptop.
-- Hardware: two Waveshare Modbus-TCP relay modules over Ethernet/PoE
-  (30-ch `relay_levels` for per-level door locks; 8-ch Module C `relay_core`
-  for motor, spindle lock, digital inputs incl. door sensor; "transparent
-  mode" = raw Modbus RTU frames with CRC over TCP, no MBAP). Gledopto ESP32
-  WLED via ArtNet for LED feedback. Audio via HDMI (pygame).
+- Hardware: two Waveshare Modbus-TCP relay modules over Ethernet/PoE (30-ch
+  `relay_levels` for door locks; 8-ch Module C `relay_core` for motor, spindle
+  lock and the door sensor input). Gledopto ESP32 WLED via ArtNet for LED
+  feedback. Audio via HDMI (pygame).
 
 ## Dropped features
 

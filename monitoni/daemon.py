@@ -13,7 +13,7 @@ from monitoni.eventlog import EventLog
 from monitoni.flow import REASON_HARDWARE, Event, Flow, IllegalTransition, State
 from monitoni.hardware.base import DoorEvent, Hardware, HardwareError, HardwareFault
 from monitoni.motor import Motor
-from monitoni.purchase import PurchaseServer
+from monitoni.purchase import MockPurchaseServer, PurchaseServer
 from monitoni.web.server import create_app
 
 log = logging.getLogger(__name__)
@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 class Daemon:
     recovery_check_s = 1.0  # how often the drainer asks whether a hardware fault has cleared
+    recovery_dwell_s = 10.0  # the hardware must be healthy this long, without a break, first
     recovery_holdoff_s = 30.0  # pause after a recovery attempt that ended in out_of_order again
 
     def __init__(self, config: Config, hardware: Hardware, purchase: PurchaseServer) -> None:
@@ -107,8 +108,14 @@ class Daemon:
     # -- hardware events -----------------------------------------------------
 
     async def _drain_hardware_events(self) -> None:
-        """Forward door events and faults to the flow; end a hardware fault once it has cleared."""
+        """Forward door events and faults to the flow; end a hardware fault once it has cleared.
+
+        Recovery needs `hardware.healthy()` to hold for `recovery_dwell_s` without a break, so a
+        flapping link does not flap the machine; a check that finds it unhealthy restarts the
+        streak. A recovery attempt that ends in out_of_order again waits `recovery_holdoff_s`.
+        """
         loop = asyncio.get_running_loop()
+        healthy_since: float | None = None
         next_recovery_at = 0.0
         while True:
             try:
@@ -127,15 +134,26 @@ class Daemon:
                                         level=self.flow.selected_level,
                                         details={"event": "fault", "error": item.message})
                 await self.flow.dispatch(Event.HARDWARE_FAULT, error=item.message)
+            now = loop.time()
+            if not self.hardware.healthy():
+                healthy_since = None
+            elif healthy_since is None:
+                healthy_since = now
             if (self.flow.state is State.OUT_OF_ORDER and self.flow.reason == REASON_HARDWARE
-                    and self.hardware.healthy() and loop.time() >= next_recovery_at):
-                log.info("hardware is healthy again, leaving out_of_order")
+                    and healthy_since is not None and now - healthy_since >= self.recovery_dwell_s
+                    and now >= next_recovery_at):
+                log.info("hardware healthy for %.0fs, leaving out_of_order", now - healthy_since)
                 with contextlib.suppress(IllegalTransition):
                     await self.flow.dispatch(Event.HARDWARE_OK)
                 if self.flow.state is State.OUT_OF_ORDER:
                     next_recovery_at = loop.time() + self.recovery_holdoff_s
 
     # -- status ----------------------------------------------------------------
+
+    @property
+    def purchase_is_mock(self) -> bool:
+        """Payments can be simulated while the purchase server is the mock (every mode so far)."""
+        return isinstance(self.purchase, MockPurchaseServer)
 
     @property
     def url(self) -> str:
@@ -155,6 +173,7 @@ class Daemon:
         return {
             "machine_id": self.config.system.machine_id,
             "hardware_mode": self.config.hardware.mode,
+            "purchase_mode": "mock" if self.purchase_is_mock else "real",
             "uptime_s": round(uptime, 1),
             **flow,
             "levels": levels,

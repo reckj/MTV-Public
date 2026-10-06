@@ -45,6 +45,11 @@
       <h1>Please close the door</h1>
     </section>
 
+    <section data-state="door_forced" id="forced">
+      <h1>Door forced</h1>
+      <p>A door was opened without a purchase. Close it.</p>
+    </section>
+
     <section data-state="completing">
       <h1>Thank you</h1>
     </section>
@@ -57,7 +62,7 @@
   </main>
 
   <aside id="dev" hidden>
-    <h2>Dev panel (mock hardware)</h2>
+    <h2>Dev panel</h2>
     <div class="row">
       <button data-command="simulate_payment">Simulate payment</button>
       <button data-command="simulate_door" data-open="true">Door open</button>

@@ -20,7 +20,7 @@ from tests.helpers import wait_until
 
 ALLOWED = sorted(TRANSITIONS.items(), key=lambda kv: (kv[0][0].value, kv[0][1].value))
 REJECTED = [
-    (State.IDLE, Event.DOOR_OPENED),
+    (State.IDLE, Event.DOOR_CLOSED),
     (State.IDLE, Event.COMPLETE),
     (State.IDLE, Event.PURCHASE_VALID),
     (State.IDLE, Event.CANCEL),
@@ -28,7 +28,10 @@ REJECTED = [
     (State.DOOR_UNLOCKED, Event.SELECT_LEVEL),
     (State.DOOR_UNLOCKED, Event.CANCEL),
     (State.DOOR_OPENED, Event.CANCEL),
+    (State.DOOR_FORCED, Event.SELECT_LEVEL),
+    (State.DOOR_FORCED, Event.DOOR_OPENED),
     (State.OUT_OF_ORDER, Event.SELECT_LEVEL),
+    (State.OUT_OF_ORDER, Event.DOOR_OPENED),
     (State.OUT_OF_ORDER, Event.RESET),
 ]
 
@@ -224,6 +227,8 @@ async def test_out_of_order_at_startup(make_flow):
     assert_all_locked(flow)
     with pytest.raises(IllegalTransition):
         await flow.dispatch(Event.SELECT_LEVEL, level=1)
+    with pytest.raises(IllegalTransition):  # a door event stays rejected and logged here
+        await flow.dispatch(Event.DOOR_OPENED)
     await flow.dispatch(Event.TOUCH)
     assert flow.state is State.OUT_OF_ORDER
 
@@ -231,9 +236,34 @@ async def test_out_of_order_at_startup(make_flow):
 async def test_rejected_event_is_logged(make_flow):
     flow = await make_flow()
     with pytest.raises(IllegalTransition):
-        await flow.dispatch(Event.DOOR_OPENED)
+        await flow.dispatch(Event.COMPLETE)
     rows = await flow.events.recent(1)
-    assert rows[0]["kind"] == "rejected" and rows[0]["details"] == {"event": "door_opened"}
+    assert rows[0]["kind"] == "rejected" and rows[0]["details"] == {"event": "complete"}
+
+
+# -- forced door: opened without a purchase ----------------------------------------
+
+FORCED_FROM = [State.IDLE, State.SLEEP, State.CHECKING_PURCHASE]
+
+
+@pytest.mark.parametrize("state", FORCED_FROM, ids=[s.value for s in FORCED_FROM])
+async def test_door_opened_without_a_purchase_raises_the_alarm_until_closed(make_flow, state):
+    flow = await make_flow()
+    await force(flow, state)
+    await flow.dispatch(Event.DOOR_OPENED)
+    assert flow.state is State.DOOR_FORCED and flow.countdown_s is None  # no timeout
+    assert flow.hardware.calls[-1] == "alarm(True)" and flow.hardware.status()["alarm"]
+    assert flow._poll_task is None  # purchase polling, if there was any, is gone
+    await asyncio.sleep(0.05)
+    assert flow.state is State.DOOR_FORCED
+    await flow.dispatch(Event.DOOR_CLOSED)
+    assert flow.state is State.IDLE and flow.selected_level is None and flow.purchase_id is None
+    assert flow.hardware.calls[-2:] == ["alarm(False)", "lock_all_doors"]
+    assert_all_locked(flow)
+    rows = await flow.events.recent(50)
+    assert not [r for r in rows if r["kind"] == "purchase_complete"]
+    transitions = [r["details"]["to"] for r in reversed(rows) if r["kind"] == "transition"]
+    assert transitions[-2:] == ["door_forced", "idle"]
 
 
 # -- entry hooks complete before the state is visible -----------------------------

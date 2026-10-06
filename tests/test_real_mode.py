@@ -11,6 +11,7 @@ from tests.helpers import command, events, status, wait_for_state
 def make_real_daemon(config) -> Daemon:
     daemon = Daemon(config, RealHardware(config), MockPurchaseServer())
     daemon.recovery_check_s = 0.02
+    daemon.recovery_dwell_s = 0.05
     return daemon
 
 
@@ -25,7 +26,8 @@ async def daemon(real_config):
 async def to_door_unlocked(client, daemon, level: int = 3) -> dict:
     code, _ = await command(client, daemon, command="select_level", level=level)
     assert code == 200
-    daemon.purchase.simulate_payment(level)
+    code, _ = await command(client, daemon, command="simulate_payment")  # the purchase mock
+    assert code == 200
     return await wait_for_state(client, daemon, "door_unlocked")
 
 
@@ -33,6 +35,7 @@ async def test_happy_path_with_the_fake_door_sensor(client, daemon, fakes):
     core, levels = fakes
     body = await status(client, daemon)
     assert body["state"] == "idle" and body["hardware_mode"] == "real" and body["reason"] is None
+    assert body["purchase_mode"] == "mock"
     assert body["hardware"]["relay_core"]["connected"]
     assert body["hardware"]["relay_levels"]["connected"]
     assert body["hardware"]["door_open"] is False and set(body["doors"].values()) == {"locked"}
@@ -93,6 +96,16 @@ async def test_starts_out_of_order_with_a_module_unreachable_and_recovers(client
         assert set(body["doors"].values()) == {"locked"} and levels.coils == [False] * 30
     finally:
         await daemon.stop()
+
+
+async def test_forced_door_in_real_mode(client, daemon, fakes):
+    core, levels = fakes
+    core.inputs[0] = False  # the door opens while idle
+    body = await wait_for_state(client, daemon, "door_forced")
+    assert body["hardware"]["door_open"] is True and body["countdown_s"] is None
+    core.inputs[0] = True
+    body = await wait_for_state(client, daemon, "idle")
+    assert levels.coils == [False] * 30 and set(body["doors"].values()) == {"locked"}
 
 
 async def test_turn_button_in_real_mode(client, daemon, fakes):
