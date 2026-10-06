@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             leds = ArtnetLeds(config)
         if args.mock or not config.hardware.audio.enabled:
             log.info("audio: %s", "mock" if args.mock else "disabled in config")
-            audio = MockAudio(config.hardware.audio.volume)
+            audio = MockAudio(config.hardware.audio.volume, config.hardware.audio.enabled)
         else:
             audio = PygameAudio(config.hardware.audio)
     return asyncio.run(run(config, hardware, purchase, leds, audio))

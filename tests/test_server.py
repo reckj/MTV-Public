@@ -67,8 +67,9 @@ async def test_status_endpoint(client, daemon):
     assert set(body["doors"].values()) == {"locked"}
     assert body["qr_url"] is None and body["selected_level"] is None
     assert body["countdown_s"] is not None  # idle has a sleep timeout
-    assert body["leds"] == {"reachable": True, "pattern": "idle", "level": None, "brightness": 0.6}
-    assert body["audio"] == {"available": True, "volume": 0.7, "playing": None}
+    assert body["leds"] == {"enabled": True, "reachable": True, "pattern": "idle", "level": None,
+                            "brightness": 0.6}
+    assert body["audio"] == {"enabled": True, "available": True, "volume": 0.7, "playing": None}
 
 
 async def test_index_serves_html(client, daemon):

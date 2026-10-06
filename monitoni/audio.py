@@ -35,7 +35,7 @@ class Audio(Protocol):
     def set_volume(self, volume: float) -> None: ...
 
     def status(self) -> dict:
-        """{available, volume, playing}"""
+        """{enabled, available, volume, playing}"""
         ...
 
 
@@ -50,6 +50,7 @@ class PygameAudio:
     def __init__(self, config: AudioConfig) -> None:
         self.config = config
         self.volume = config.volume
+        self.enabled = config.enabled  # the config flag, for the settings screens
         self.available = False
         self._sounds: dict[str, pygame.mixer.Sound] = {}
         self._channel: pygame.mixer.Channel | None = None
@@ -100,7 +101,8 @@ class PygameAudio:
         playing = None
         if self.available and self._channel is not None and self._channel.get_busy():
             playing = self._playing
-        return {"available": self.available, "volume": self.volume, "playing": playing}
+        return {"enabled": self.enabled, "available": self.available, "volume": self.volume,
+                "playing": playing}
 
 
 # -- the mock, for mock mode and tests -------------------------------------------------
@@ -108,8 +110,9 @@ class PygameAudio:
 class MockAudio:
     """Records every call; a one-shot counts as playing for MOCK_SOUND_S, a loop until stopped."""
 
-    def __init__(self, volume: float = 0.7) -> None:
+    def __init__(self, volume: float = 0.7, enabled: bool = True) -> None:
         self.volume = volume
+        self.enabled = enabled
         self.available = True
         self.calls: list[tuple] = []  # (monotonic time, method, args...)
         self._playing: tuple[str, bool, float] | None = None  # name, looped, started
@@ -141,4 +144,5 @@ class MockAudio:
             name, loop, started = self._playing
             if loop or time.monotonic() - started < MOCK_SOUND_S:
                 playing = name
-        return {"available": True, "volume": self.volume, "playing": playing}
+        return {"enabled": self.enabled, "available": True, "volume": self.volume,
+                "playing": playing}

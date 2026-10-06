@@ -10,20 +10,33 @@ from monitoni.audio import MockAudio, PygameAudio
 SOUNDS_DIR = "assets/sounds"
 
 
+def pygame_params(path: str) -> tuple[int, int, int]:
+    """(channels, bytes per sample, rate) of a wav file."""
+    import wave
+
+    with wave.open(path) as wav:
+        return wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
+
+
 def test_mock_records_calls_and_reports_what_plays(monkeypatch):
     audio = MockAudio(volume=0.7)
-    assert audio.status() == {"available": True, "volume": 0.7, "playing": None}
+    assert audio.status() == {"enabled": True, "available": True, "volume": 0.7, "playing": None}
     audio.play("success")
     assert audio.status()["playing"] == "success"
     audio.play("alarm", loop=True)
     audio.set_volume(2)
-    assert audio.status() == {"available": True, "volume": 1.0, "playing": "alarm"}
+    assert audio.status() == {"enabled": True, "available": True, "volume": 1.0,
+                              "playing": "alarm"}
     audio.stop_playing()
     assert audio.status()["playing"] is None
     assert [c[1:] for c in audio.calls] == [("play", "success", False), ("play", "alarm", True),
                                             ("set_volume", 1.0), ("stop_playing",)]
     with pytest.raises(ValueError, match="unknown sound 'ding'"):
         audio.play("ding")
+
+
+def test_mock_carries_the_config_flag():
+    assert MockAudio(enabled=False).status()["enabled"] is False
 
 
 def test_mock_one_shot_ends_by_itself(monkeypatch):
@@ -47,10 +60,12 @@ async def test_pygame_plays_and_loops_without_a_device(audio_config, monkeypatch
     audio = PygameAudio(audio_config)
     await audio.start()
     try:
-        assert audio.status() == {"available": True, "volume": 0.7, "playing": None}
+        assert audio.status() == {"enabled": True, "available": True, "volume": 0.7,
+                                  "playing": None}
         audio.play("alarm", loop=True)
         assert audio.status()["playing"] == "alarm"
         await asyncio.sleep(1.2)  # alarm.wav is one second long: a loop is still going
+        assert pygame_params("assets/sounds/success.wav") == (2, 2, 44100)  # like the other two
         assert audio.status()["playing"] == "alarm"
         audio.stop_playing()
         assert audio.status()["playing"] is None
@@ -74,11 +89,13 @@ async def test_pygame_without_an_audio_device_is_a_no_op(audio_config, monkeypat
         await audio.start()
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "audio unavailable" in warnings[0].getMessage()
-    assert audio.status() == {"available": False, "volume": 0.7, "playing": None}
+    assert audio.status() == {"enabled": True, "available": False, "volume": 0.7,
+                              "playing": None}
     audio.play("alarm", loop=True)  # all no-ops, nothing raises
     audio.stop_playing()
     audio.set_volume(0.5)
-    assert audio.status() == {"available": False, "volume": 0.5, "playing": None}
+    assert audio.status() == {"enabled": True, "available": False, "volume": 0.5,
+                              "playing": None}
     with pytest.raises(ValueError):  # a wrong name is a bug even without a device
         audio.play("fanfare")
     await audio.stop()

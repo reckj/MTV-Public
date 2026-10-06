@@ -35,7 +35,7 @@ class Daemon:
         self.hardware = hardware
         self.purchase = purchase
         self.leds = leds or MockLeds(config)
-        self.audio = audio or MockAudio(config.hardware.audio.volume)
+        self.audio = audio or MockAudio(config.hardware.audio.volume, config.hardware.audio.enabled)
         self.events = EventLog(config.database.path)
         self.changed = asyncio.Event()  # set by the flow on every state change
         self.outbox = Outbox(config.database.path, purchase, self.events,
