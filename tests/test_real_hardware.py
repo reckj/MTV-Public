@@ -183,3 +183,18 @@ async def test_alarm_only_logs(hardware, fakes, caplog):
         await hardware.alarm(True)
     assert "alarm on" in caplog.text
     assert len(fakes[0].requests) + len(fakes[1].requests) == before
+
+
+async def test_module_status_says_since_when_the_link_flips(hardware, fakes):
+    core, levels = fakes
+    assert hardware.status()["relay_levels"]["since"] is None  # connected since the start
+    assert hardware.status()["door_poll_since"] is None and hardware.status()["door_poll_ok"]
+    await levels.drop_connections()
+    await wait_until(lambda: hardware.status()["relay_levels"]["connected"] is False, "lost")
+    lost = hardware.status()["relay_levels"]["since"]
+    assert lost is not None and "T" in lost
+    await wait_until(lambda: hardware.status()["relay_levels"]["connected"], "back")
+    assert hardware.status()["relay_levels"]["since"] >= lost
+    await core.drop_connections()
+    await wait_until(lambda: hardware.status()["door_poll_ok"] is False, "poll stopped")
+    assert hardware.status()["door_poll_since"] is not None

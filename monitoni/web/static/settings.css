@@ -59,7 +59,7 @@ body[data-motor="pressed"] .turn small, body[data-motor="running"] .turn small {
 .m { width: 14px; height: 14px; border-radius: 50%; background: var(--ok); flex: none; display: inline-block; }
 .m.b { background: var(--alert); } .m.w { background: var(--amber); }
 .problem { font-family: var(--font-dot); font-size: var(--t-dot-m); font-weight: 700; color: var(--alert); min-height: 30px; letter-spacing: .04em; line-height: 1.3; }
-.problem.dim { color: var(--cream-dim); }
+.problem.warn { color: var(--amber); white-space: nowrap; }
 .card { padding: 4px 22px; }
 .card h4 { margin: 14px 0 2px; font-family: var(--font-mono); font-size: var(--t-cap-s); letter-spacing: .08em; text-transform: uppercase; color: var(--cream-dim); font-weight: 500; }
 #settings .r { display: flex; align-items: center; justify-content: space-between; min-height: var(--h-row); width: 100%; font-size: var(--t-row); font-weight: 500; border-top: 1px solid var(--line); gap: 12px; white-space: nowrap; }

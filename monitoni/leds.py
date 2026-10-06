@@ -26,6 +26,7 @@ from typing import Protocol
 import httpx
 
 from monitoni.config import Config
+from monitoni.stamp import local_time
 
 log = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ class Leds(Protocol):
     def off(self) -> None: ...
 
     def status(self) -> dict:
-        """{enabled, reachable, pattern, level, brightness}"""
+        """{enabled, reachable, since, pattern, level, brightness}"""
         ...
 
 
@@ -210,6 +211,7 @@ class _Base:
         self.enabled = config.hardware.wled.enabled  # the config flag, for the settings screens
         self.on_reachability: Callable[[bool], None] = lambda ok: None
         self.reachable: bool | None = None
+        self.since: str | None = None  # when `reachable` last flipped; None while ok since start
         self._showing = _showing(self.layout, "off", None)
 
     def set_pattern(self, pattern: str, level: int | None = None) -> None:
@@ -235,7 +237,7 @@ class _Base:
         self._changed()
 
     def status(self) -> dict:
-        return {"enabled": self.enabled, "reachable": self.reachable,
+        return {"enabled": self.enabled, "reachable": self.reachable, "since": self.since,
                 "pattern": self._showing.name, "level": self._showing.level,
                 "brightness": self.brightness}
 
@@ -355,6 +357,8 @@ class ArtnetLeds(_Base):
                 except httpx.HTTPError as exc:
                     ok, error = False, f"{type(exc).__name__}: {exc or 'no detail'}"
                 if ok != self.reachable:
+                    if not (self.reachable is None and ok):
+                        self.since = local_time()
                     self.reachable = ok
                     log.log(logging.INFO if ok else logging.WARNING, "WLED at %s %s%s",
                             self.config.ip_address, "reachable" if ok else "unreachable",

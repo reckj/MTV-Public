@@ -14,6 +14,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")  # keeps pygame's banne
 import pygame  # noqa: E402
 
 from monitoni.config import AudioConfig  # noqa: E402
+from monitoni.stamp import local_time  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class Audio(Protocol):
     def set_volume(self, volume: float) -> None: ...
 
     def status(self) -> dict:
-        """{enabled, available, volume, playing}"""
+        """{enabled, available, since, volume, playing}"""
         ...
 
 
@@ -52,6 +53,7 @@ class PygameAudio:
         self.volume = config.volume
         self.enabled = config.enabled  # the config flag, for the settings screens
         self.available = False
+        self.since: str | None = None  # when audio became unavailable; None while fine
         self._sounds: dict[str, pygame.mixer.Sound] = {}
         self._channel: pygame.mixer.Channel | None = None
         self._playing: str | None = None
@@ -64,6 +66,7 @@ class PygameAudio:
         except (pygame.error, OSError) as exc:
             log.warning("audio unavailable, sounds are off: %s", exc)
             self._sounds.clear()
+            self.since = local_time()
             pygame.mixer.quit()
             return
         self.available = True
@@ -101,8 +104,8 @@ class PygameAudio:
         playing = None
         if self.available and self._channel is not None and self._channel.get_busy():
             playing = self._playing
-        return {"enabled": self.enabled, "available": self.available, "volume": self.volume,
-                "playing": playing}
+        return {"enabled": self.enabled, "available": self.available, "since": self.since,
+                "volume": self.volume, "playing": playing}
 
 
 # -- the mock, for mock mode and tests -------------------------------------------------
@@ -144,5 +147,5 @@ class MockAudio:
             name, loop, started = self._playing
             if loop or time.monotonic() - started < MOCK_SOUND_S:
                 playing = name
-        return {"enabled": self.enabled, "available": True, "volume": self.volume,
-                "playing": playing}
+        return {"enabled": self.enabled, "available": True, "since": None,
+                "volume": self.volume, "playing": playing}

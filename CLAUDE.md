@@ -60,6 +60,9 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - Door lock rule: only the `idle`/`out_of_order` entry hook locks (all doors
   at once); `unlock_door` has two callers, the `door_unlocked` hook and the
   settings Doors tool. Nothing relocks in `settings`; leaving it locks all.
+- Spindle rule: `motor.py` is the one owner of the spindle lock state; the
+  settings tool goes through `motor.set_spindle`, and every flow transition
+  stops the motor and closes the spindle (a TURN held across Exit ends there).
 - Read-back rule: every coil write is followed by a read of that coil; a
   mismatch is a `HardwareError`. Lock state is what the module reports. Relay
   ON = unlocked; relay OFF or power loss = locked.
@@ -69,8 +72,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
   `recovery_dwell_s` = 10 s. `maintenance` (the runtime switch) and `database`
   (a lost report) never clear themselves. No command is retried; the motor's
   emergency OFF is the one second write. Hardware stop switches nothing.
-- Motor stop rule: the motor stops on release, after `max_run_s`, on leaving
-  `idle`/`settings`, when the last WebSocket closes and on daemon stop.
+- Motor stop rule: the motor stops on release, after `max_run_s`, on every
+  transition, when the last WebSocket closes and on daemon stop.
 - Purchase server (Monitoni): `GET /api/vending/permission` polled once a
   second in `checking_purchase`; `{"HasPermission": true, "Item": N}` unlocks
   level N whatever was selected. `GET …/complete` the moment the door opens,

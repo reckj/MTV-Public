@@ -108,13 +108,14 @@ function build(status) {
 
 // -- per-screen rendering from the status object -------------------------------------------
 
+// label, the flag, the problem text, when it flipped (local ISO time or null)
 const MARK_RULES = [
-  ["Doors", (s) => s.hardware.mode === "mock" ? true : s.hardware.relay_levels.connected, "DOOR RELAYS DISCONNECTED"],
-  ["Core", (s) => s.hardware.mode === "mock" ? true : s.hardware.relay_core.connected, "CORE RELAYS DISCONNECTED"],
-  ["LEDs", (s) => s.leds.reachable, "LEDS UNREACHABLE"],
-  ["Server", (s) => s.purchase_server.reachable, "SERVER UNREACHABLE"],
-  ["Sensor", (s) => s.hardware.mode === "mock" ? true : s.hardware.door_poll_ok, "DOOR SENSOR NOT READING"],
-  ["Audio", (s) => s.audio.available, "AUDIO UNAVAILABLE"],
+  ["Doors", (s) => s.hardware.mode === "mock" ? true : s.hardware.relay_levels.connected, "DOOR RELAYS DISCONNECTED", (s) => s.hardware.relay_levels?.since],
+  ["Core", (s) => s.hardware.mode === "mock" ? true : s.hardware.relay_core.connected, "CORE RELAYS DISCONNECTED", (s) => s.hardware.relay_core?.since],
+  ["LEDs", (s) => s.leds.reachable, "LEDS UNREACHABLE", (s) => s.leds.since],
+  ["Server", (s) => s.purchase_server.reachable, "SERVER UNREACHABLE", (s) => s.purchase_server.since],
+  ["Sensor", (s) => s.hardware.mode === "mock" ? true : s.hardware.door_poll_ok, "DOOR SENSOR NOT READING", (s) => s.hardware.door_poll_since],
+  ["Audio", (s) => s.audio.available, "AUDIO UNAVAILABLE", (s) => s.audio.since],
 ];
 const markClass = (ok) => ok === true ? "m" : ok === false ? "m b" : "m w";
 
@@ -127,14 +128,12 @@ function renderScreens(s) {
   const problem = el("problem");
   problem.className = "problem";
   if (hw.door_open) problem.textContent = "DOOR OPEN · CLOSE IT TO EXIT";
-  else if (bad) problem.textContent = bad[2] + (bad[0] === "Server" && s.purchase_server.last_ok ? ` · LAST OK ${clock(s.purchase_server.last_ok).slice(0, 5)}` : "");
+  else if (bad) { const since = bad[3](s); problem.textContent = bad[2] + (since ? ` · SINCE ${clock(since).slice(0, 5)}` : ""); }
   else if (s.reason) problem.textContent = `OUT OF ORDER · ${s.reason.toUpperCase()}`;
-  else if (s.settings.pin_is_default) { problem.textContent = "DEFAULT PIN — CHANGE IT IN LOCAL.YAML"; problem.className = "problem dim"; }
+  else if (s.settings.pin_is_default) { problem.textContent = "CHANGE THE DEFAULT PIN"; problem.className = "problem warn"; }
   else problem.textContent = "";
   el("ooo_switch").classList.toggle("on", s.settings.out_of_order);
-  el("sim").hidden = s.hardware_mode !== "mock" && s.purchase_mode !== "mock";
-  el("sim_pay").hidden = s.purchase_mode !== "mock";
-  el("sim_open").hidden = el("sim_close").hidden = s.hardware_mode !== "mock";
+  el("sim").hidden = s.hardware_mode !== "mock";  // Open / Close: the door sensor, mock only
   el("foot_left").textContent = `${s.machine_id} · v${s.app_version}`;
   const up = Math.floor(s.uptime_s);
   el("foot_right").textContent = `up ${Math.floor(up / 86400)} d ${Math.floor((up % 86400) / 3600)} h`;
@@ -156,8 +155,8 @@ function renderScreens(s) {
     b.disabled = state === "unknown";
   }
 
-  // S3 Motor
-  const m = hw.motor || {};
+  // S3 Motor: the motor module's own state, the one owner of the spindle lock
+  const m = s.motor;
   setDot("motor_live", m.running === true ? "ON" : m.running === false ? "OFF" : "?", m.running === true);
   setDot("spindle_live", m.spindle_open === true ? "OPEN" : m.spindle_open === false ? "CLOSED" : "?", m.spindle_open === true);
   el("spindle_btn").textContent = m.spindle_open ? "Close" : "Open";
@@ -337,11 +336,10 @@ function wireSettings() {
     el("confirm").hidden = false;
   };
   el("confirm_no").onclick = () => { el("confirm").hidden = true; };
-  el("sim_pay").onclick = () => send({ command: "simulate_payment" });
   el("sim_open").onclick = () => send({ command: "simulate_door", open: true });
   el("sim_close").onclick = () => send({ command: "simulate_door", open: false });
   el("lock_all").onclick = () => post("lock_all");
-  el("spindle_btn").onclick = () => post("spindle", { open: !st.status.hardware.motor.spindle_open });
+  el("spindle_btn").onclick = () => post("spindle", { open: !st.status.motor.spindle_open });
   const turn = el("turn_s3");
   const release = () => send({ command: "motor_release" });
   turn.onpointerdown = () => send({ command: "motor_press" });

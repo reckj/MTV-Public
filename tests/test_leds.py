@@ -83,8 +83,8 @@ def test_breathing_is_smooth_and_never_dark(layout):
 
 def test_mock_records_calls_and_renders_frames(make_config):
     leds = MockLeds(make_config())
-    assert leds.status() == {"enabled": True, "reachable": True, "pattern": "off", "level": None,
-                             "brightness": 0.6}
+    assert leds.status() == {"enabled": True, "reachable": True, "since": None, "pattern": "off",
+                             "level": None, "brightness": 0.6}
     leds.set_pattern("selected", 3)
     leds.fill((10, 20, 30))
     leds.light_level(2, (1, 2, 3))
@@ -229,13 +229,17 @@ async def test_health_poll_reports_reachability_changes(make_leds, fake_artnet):
     leds.on_reachability = seen.append
     await wait_until(lambda: leds.reachable is True, "reachable")
     assert seen == [True] or seen == []  # the first poll may have run before the hook was set
+    assert leds.since is None  # fine since the start
     fake_artnet.http_up = False
     await wait_until(lambda: leds.reachable is False, "unreachable")
     assert seen[-1] is False
+    assert leds.since is not None and leds.status()["since"] == leds.since
+    went_bad = leds.since
     fake_artnet.http_up = True
     await wait_until(lambda: leds.reachable is True, "reachable again")
     assert seen[-2:] == [False, True]
     assert leds.status()["reachable"] is True
+    assert leds.since is not None and leds.since >= went_bad  # the flip back is stamped too
 
 
 async def test_unreachable_controller_is_status_only(make_config):

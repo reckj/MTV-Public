@@ -62,16 +62,18 @@ async def test_status_endpoint(client, daemon):
     assert set(body) == STATUS_KEYS
     assert body["state"] == "idle" and body["hardware_mode"] == "mock" and body["reason"] is None
     assert body["purchase_mode"] == "mock"
-    assert body["purchase_server"] == {"reachable": True, "last_ok": None, "last_error": None,
-                                       "outbox_pending": 0, "base_url": "monitoni.zhdk.ch"}
+    assert body["purchase_server"] == {"reachable": True, "since": None, "last_ok": None,
+                                       "last_error": None, "outbox_pending": 0,
+                                       "base_url": "monitoni.zhdk.ch"}
     assert body["levels"] == 10 and set(body["doors"]) == {str(n) for n in range(1, 11)}
     assert body["hardware"]["mode"] == "mock" and body["motor"]["running"] is False
     assert set(body["doors"].values()) == {"locked"}
     assert body["qr_url"] is None and body["selected_level"] is None
     assert body["countdown_s"] is not None  # idle has a sleep timeout
-    assert body["leds"] == {"enabled": True, "reachable": True, "pattern": "idle", "level": None,
-                            "brightness": 0.6}
-    assert body["audio"] == {"enabled": True, "available": True, "volume": 0.7, "playing": None}
+    assert body["leds"] == {"enabled": True, "reachable": True, "since": None, "pattern": "idle",
+                            "level": None, "brightness": 0.6}
+    assert body["audio"] == {"enabled": True, "available": True, "since": None, "volume": 0.7,
+                             "playing": None}
 
 
 async def test_index_serves_html(client, daemon):

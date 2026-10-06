@@ -105,14 +105,15 @@ async def test_reachability_callback_fires_on_changes_only(http, purchase_fake):
     http.on_reachability = seen.append
     await http.permission()
     await http.permission()
-    assert seen == [True]
+    assert seen == [True] and http.since is None  # reachable since the start
     purchase_fake.fail_next = 2
     for _ in range(2):
         with pytest.raises(PurchaseServerError):
             await http.permission()
     assert seen == [True, False]
+    assert http.since is not None and http.status()["since"] == http.since
     await http.permission()
-    assert seen == [True, False, True]
+    assert seen == [True, False, True] and http.since is not None
 
 
 async def test_complete_and_close_accept_201_and_report_500_as_false(http, purchase_fake):
@@ -137,5 +138,6 @@ def test_status_shape_has_no_token(make_config):
     config = make_config().purchase_server
     config.token = "secret-token"
     server = HttpPurchaseServer(config)
-    assert server.status() == {"reachable": None, "last_ok": None, "last_error": None}
+    assert server.status() == {"reachable": None, "since": None, "last_ok": None,
+                               "last_error": None}
     assert "secret-token" not in repr(server.status())

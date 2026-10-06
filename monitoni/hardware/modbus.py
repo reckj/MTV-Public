@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 from typing import NoReturn, TypeVar
 
 from monitoni.hardware.base import HardwareError
+from monitoni.stamp import Flag
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ class ModbusTcpModule:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._lock = asyncio.Lock()
+        self._link = Flag()  # `connected` as last recorded, with the time it flipped
 
     @property
     def connected(self) -> bool:
@@ -133,8 +135,9 @@ class ModbusTcpModule:
                 and not self._reader.at_eof())
 
     def status(self) -> dict:
+        self._link.set(self.connected)  # a peer close shows in `connected` before _fail runs
         return {"connected": self.connected, "host": self.host, "port": self.port,
-                "last_error": self.last_error}
+                "last_error": self.last_error, "since": self._link.since}
 
     async def connect(self) -> None:
         """Open the TCP connection. Raises HardwareError if the module is unreachable."""
@@ -144,12 +147,15 @@ class ModbusTcpModule:
         except (OSError, TimeoutError) as exc:
             self._reader = self._writer = None
             self.last_error = f"connect failed: {exc or type(exc).__name__}"
+            self._link.set(False)
             raise HardwareError(f"{self.name} {self.host}:{self.port}: {self.last_error}") from None
         self.last_error = None
+        self._link.set(True)
         log.info("%s connected to %s:%d", self.name, self.host, self.port)
 
     async def close(self) -> None:
         writer, self._writer, self._reader = self._writer, None, None
+        self._link.set(False)
         if writer is not None:
             writer.close()
             with contextlib.suppress(Exception):  # incl. TimeoutError: never wait on a dead peer

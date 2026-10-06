@@ -136,7 +136,7 @@ from `config/default.yaml`):
   digits, written as a string in quotes (`pin: "4711"`). The default is
   `"0000"`; every start with the default logs the line `settings.pin is still
   the default 0000: set it in config/local.yaml` and the settings home screen
-  shows "DEFAULT PIN — CHANGE IT IN LOCAL.YAML" until it is changed.
+  shows "CHANGE THE DEFAULT PIN" in amber until it is changed.
 - `hardware.wled.pixel_count` — how many pixels the LED strip has, and
   `led.zones` — which pixels belong to which level: one `[first, last]` pair
   per level, level 1 first, both numbers inclusive, pixel 0 being the one
@@ -261,7 +261,9 @@ no lockout. The home screen shows six dots: Doors (the door relay module),
 Core (the core relay module), LEDs (the WLED controller answers), Server (the
 purchase server answered the last request), Sensor (the door sensor is being
 read), Audio (a sound device was found). Green is fine, red is a problem, amber
-is "not known yet"; the line under the dots names the first problem. Below:
+is "not known yet"; the line under the dots names the first problem and since
+when (for example "SERVER UNREACHABLE · SINCE 14:02"), or reads "CHANGE THE
+DEFAULT PIN" in amber while the PIN is still `0000`. Below:
 the Out of order switch, the sections Doors, Motor, LEDs, Audio, Network, QR
 codes and Events, and the footer with the machine id, the software version and
 the uptime. "Exit" at the top left returns to the customer screen; it refuses

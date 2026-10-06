@@ -22,6 +22,7 @@ from typing import Protocol
 import httpx
 
 from monitoni.config import PurchaseServerConfig
+from monitoni.stamp import local_time
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class PurchaseServer(Protocol):
         ...
 
     def status(self) -> dict:
-        """{reachable, last_ok, last_error}, JSON-serialisable, without the token."""
+        """{reachable, since, last_ok, last_error}, JSON-serialisable, without the token."""
         ...
 
 
@@ -78,6 +79,7 @@ class HttpPurchaseServer:
         self.config = config
         self.on_reachability: Callable[[bool], None] = lambda ok: None
         self.reachable: bool | None = None  # unknown until the first request
+        self.since: str | None = None  # when `reachable` last flipped; None while ok since start
         self.last_ok: str | None = None
         self.last_error: str | None = None
         self._client: httpx.AsyncClient | None = None
@@ -93,7 +95,8 @@ class HttpPurchaseServer:
             await client.aclose()
 
     def status(self) -> dict:
-        return {"reachable": self.reachable, "last_ok": self.last_ok, "last_error": self.last_error}
+        return {"reachable": self.reachable, "since": self.since, "last_ok": self.last_ok,
+                "last_error": self.last_error}
 
     async def permission(self) -> PermissionResult:
         path = self.config.permission_path
@@ -152,6 +155,8 @@ class HttpPurchaseServer:
         else:
             self.last_error = error
         if ok != self.reachable:
+            if not (self.reachable is None and ok):
+                self.since = local_time()
             self.reachable = ok
             log.log(logging.INFO if ok else logging.WARNING,
                     "purchase server %s%s", "reachable" if ok else "unreachable",
@@ -177,7 +182,7 @@ class MockPurchaseServer:
         pass
 
     def status(self) -> dict:
-        return {"reachable": True, "last_ok": None, "last_error": None}
+        return {"reachable": True, "since": None, "last_ok": None, "last_error": None}
 
     def simulate_payment(self, level: int, item: int | None = None) -> None:
         """The next permission answers true with Item = `item` (default: the level paid for)."""

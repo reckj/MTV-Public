@@ -13,6 +13,7 @@ import logging
 from monitoni.config import Config, RelayModuleConfig
 from monitoni.hardware.base import DoorEvent, HardwareError, HardwareFault
 from monitoni.hardware.modbus import ModbusTcpModule
+from monitoni.stamp import Flag
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class RealHardware:
         self._channels = dict(enumerate(self.config.door_locks.channels, start=1))  # level -> ch
         self._door_locked: dict[int, bool | None] = dict.fromkeys(self._channels)  # None = unknown
         self._door_open: bool | None = None
-        self._door_poll_ok = False
+        self._poll_ok = Flag()  # the last door-sensor read succeeded, with the flip time
         self._motor_on: bool | None = None
         self._spindle_on: bool | None = None
         self._tasks: list[asyncio.Task] = []
@@ -42,7 +43,7 @@ class RealHardware:
         else:
             self._motor_on = self._spindle_on = None
             self._door_open = None
-            self._door_poll_ok = False
+            self._poll_ok.set(False)
         self.events.put_nowait(HardwareFault(f"{name}: {error}"))
 
     # -- lifecycle -----------------------------------------------------------
@@ -82,7 +83,7 @@ class RealHardware:
     # -- status --------------------------------------------------------------
 
     def healthy(self) -> bool:
-        return self.core.connected and self.levels.connected and self._door_poll_ok
+        return self.core.connected and self.levels.connected and self._poll_ok.value is True
 
     def status(self) -> dict:
         return {
@@ -90,7 +91,8 @@ class RealHardware:
             "relay_core": self.core.status(),
             "relay_levels": self.levels.status(),
             "door_open": self._door_open,
-            "door_poll_ok": self._door_poll_ok,
+            "door_poll_ok": self._poll_ok.value is True,
+            "door_poll_since": self._poll_ok.since,
             "doors": {level: self._door_word(level) for level in self._channels},
             "motor": {"running": self._motor_on, "spindle_open": self._spindle_on},
         }
@@ -165,7 +167,7 @@ class RealHardware:
         """One FC02 read of the door input, wiring polarity applied."""
         cfg = self.config.door_sensor
         (raw,) = await self.core.read_discrete_inputs(cfg.di_index, 1)
-        self._door_poll_ok = True
+        self._poll_ok.set(True)
         return raw if cfg.di_active == "high" else not raw
 
     async def _door_poll(self) -> None:
@@ -176,7 +178,7 @@ class RealHardware:
         while True:
             await asyncio.sleep(cfg.poll_interval_ms / 1000)
             if not self.core.connected:
-                self._door_poll_ok = False
+                self._poll_ok.set(False)
                 continue
             try:
                 is_open = await self._read_door_input()
