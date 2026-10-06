@@ -1,41 +1,48 @@
-"""A fake purchase server speaking the protocol in monitoni/purchase.py, for tests and walks.
+"""A fake Monitoni purchase server, for tests and browser walks.
 
-  POST /api/purchase/check     {"machine_id", "level"} -> 200 {"valid": true, "purchase_id"}
-                               once a purchase was marked paid (consumed by that answer),
-                               200 {"valid": false, "reason": "rejected"} once marked invalid
-                               (also consumed), else 404
-  POST /api/purchase/complete  {"purchase_id", "machine_id", "level", "success"} -> 200 {"ok": true}
+Speaks the protocol in monitoni/purchase.py: three GETs, header `Monitoni-Terminal` checked
+against the configured token.
 
-Knobs: `pay()`, `mark_invalid()`, `fail_next` (how many requests fail) with `fail_mode` "500" or
-"timeout". Everything received is in `requests`; every accepted completion in `completions`.
-Standalone: `python -m tests.fake_purchase_server --port N`, then GET /pay?level=N,
-GET /invalid?level=N and GET /completions from a browser or curl.
+  GET /api/vending/permission  200 {"HasPermission": true, "Item": N} while a paid, unexpired
+                               permission is open (oldest first), else 200 {"HasPermission": false}
+  GET /api/vending/complete    201 {}; consumes the oldest open permission; recorded in `reports`
+  GET /api/vending/close       201 {}; recorded in `reports`
 
-Guesses, because the note does not say: the body of a 200 to `complete` ({"ok": true}), that a
-paid purchase is reported valid once, and the 404 body.
+Knobs: `pay(item, ttl_s=60)`, `fail_next`/`fail_mode` ("500" or "timeout"), `stop()`/`start()`
+keeping the port (connection refused in between). Every request lands in `requests` as
+{method, path, token_ok, body} (body = bytes received). Standalone:
+`python -m tests.fake_purchase_server --port N --token T`, then GET /pay?item=N[&ttl=S] and
+GET /reports from a browser or curl.
+
+Guesses, because the note does not say: a wrong or missing token gets 401; the body of
+HasPermission=false is `{"HasPermission": false}`; complete and close answer `201 {}`; a
+`complete` without an open permission still gets 201; a permission stays open until a
+`complete` consumes it or its ttl passes.
 """
 
 import argparse
 import asyncio
 import logging
-import uuid
+from datetime import UTC, datetime
 
 from aiohttp import web
 
+from monitoni.purchase import TOKEN_HEADER
+
 log = logging.getLogger(__name__)
 
-CHECK_PATH = "/api/purchase/check"
-COMPLETE_PATH = "/api/purchase/complete"
+PERMISSION_PATH = "/api/vending/permission"
+COMPLETE_PATH = "/api/vending/complete"
+CLOSE_PATH = "/api/vending/close"
 TIMEOUT_HOLD_S = 30.0
 
 
 class FakePurchaseServer:
-    def __init__(self, machine_id: str = "VM001") -> None:
-        self.machine_id = machine_id
-        self.paid: dict[tuple[str, int], str] = {}  # (machine_id, level) -> purchase_id
-        self.invalid: set[tuple[str, int]] = set()
-        self.completions: list[dict] = []
-        self.requests: list[tuple[str, dict]] = []  # (path, body), oldest first
+    def __init__(self, token: str = "test-token") -> None:
+        self.token = token
+        self.permissions: list[tuple[int, float]] = []  # (item, expires at loop time)
+        self.reports: list[dict] = []  # {"kind", "ts", "t"} oldest first
+        self.requests: list[dict] = []  # {"method", "path", "token_ok", "body"} oldest first
         self.fail_next = 0
         self.fail_mode = "500"  # or "timeout"
         self._runner: web.AppRunner | None = None
@@ -43,13 +50,12 @@ class FakePurchaseServer:
 
     # -- knobs -----------------------------------------------------------------
 
-    def pay(self, level: int, machine_id: str | None = None, purchase_id: str | None = None) -> str:
-        purchase_id = purchase_id or f"p-{uuid.uuid4().hex[:8]}"
-        self.paid[(machine_id or self.machine_id, level)] = purchase_id
-        return purchase_id
+    def pay(self, item: int, ttl_s: float = 60.0) -> None:
+        """A customer paid for `item`; the permission expires after ttl_s like the real server's."""
+        self.permissions.append((item, asyncio.get_running_loop().time() + ttl_s))
 
-    def mark_invalid(self, level: int, machine_id: str | None = None) -> None:
-        self.invalid.add((machine_id or self.machine_id, level))
+    def report_kinds(self) -> list[str]:
+        return [r["kind"] for r in self.reports]
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -63,11 +69,11 @@ class FakePurchaseServer:
 
     async def start(self, port: int = 0) -> None:
         app = web.Application()
-        app.router.add_post(CHECK_PATH, self._check)
-        app.router.add_post(COMPLETE_PATH, self._complete)
+        app.router.add_get(PERMISSION_PATH, self._permission)
+        app.router.add_get(COMPLETE_PATH, self._complete)
+        app.router.add_get(CLOSE_PATH, self._close)
         app.router.add_get("/pay", self._pay)
-        app.router.add_get("/invalid", self._invalid)
-        app.router.add_get("/completions", self._completions)
+        app.router.add_get("/reports", self._reports)
         self._runner = web.AppRunner(app, access_log=None, shutdown_timeout=0.1)
         await self._runner.setup()
         await web.TCPSite(self._runner, "127.0.0.1", port).start()
@@ -80,65 +86,74 @@ class FakePurchaseServer:
 
     # -- the protocol ------------------------------------------------------------
 
-    async def _failure(self) -> web.Response | None:
-        if self.fail_next <= 0:
-            return None
-        self.fail_next -= 1
-        if self.fail_mode == "timeout":
-            await asyncio.sleep(TIMEOUT_HOLD_S)
-        return web.json_response({"error": "simulated failure"}, status=500)
+    async def _record(self, request: web.Request) -> web.Response | None:
+        """Log the request; answer 401 for a bad token or the configured failure, else None."""
+        token_ok = request.headers.get(TOKEN_HEADER) == self.token
+        self.requests.append({"method": request.method, "path": request.path,
+                              "token_ok": token_ok, "body": await request.read()})
+        if not token_ok:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        if self.fail_next > 0:
+            self.fail_next -= 1
+            if self.fail_mode == "timeout":
+                await asyncio.sleep(TIMEOUT_HOLD_S)
+            return web.json_response({"error": "simulated failure"}, status=500)
+        return None
 
-    async def _check(self, request: web.Request) -> web.Response:
-        body = await request.json()
-        self.requests.append((CHECK_PATH, body))
-        if (failure := await self._failure()) is not None:
-            return failure
-        key = (body.get("machine_id"), body.get("level"))
-        if key in self.invalid:
-            self.invalid.discard(key)
-            return web.json_response({"valid": False, "reason": "rejected"})
-        if key in self.paid:
-            return web.json_response({"valid": True, "purchase_id": self.paid.pop(key)})
-        return web.json_response({"error": "no purchase"}, status=404)
+    def _open_permissions(self) -> list[tuple[int, float]]:
+        now = asyncio.get_running_loop().time()
+        self.permissions = [(item, expiry) for item, expiry in self.permissions if expiry > now]
+        return self.permissions
+
+    async def _permission(self, request: web.Request) -> web.Response:
+        if (early := await self._record(request)) is not None:
+            return early
+        if open_ := self._open_permissions():
+            return web.json_response({"HasPermission": True, "Item": open_[0][0]})
+        return web.json_response({"HasPermission": False})
 
     async def _complete(self, request: web.Request) -> web.Response:
-        body = await request.json()
-        self.requests.append((COMPLETE_PATH, body))
-        if (failure := await self._failure()) is not None:
-            return failure
-        self.completions.append(body)
-        log.info("completion: %s", body)
-        return web.json_response({"ok": True})
+        if (early := await self._record(request)) is not None:
+            return early
+        if self._open_permissions():
+            self.permissions.pop(0)
+        return self._report("complete")
+
+    async def _close(self, request: web.Request) -> web.Response:
+        if (early := await self._record(request)) is not None:
+            return early
+        return self._report("close")
+
+    def _report(self, kind: str) -> web.Response:
+        self.reports.append({"kind": kind, "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+                             "t": asyncio.get_running_loop().time()})
+        log.info("report: %s", kind)
+        return web.json_response({}, status=201)
 
     # -- browser-walk helpers ------------------------------------------------------
 
     async def _pay(self, request: web.Request) -> web.Response:
-        level = int(request.query["level"])
-        purchase_id = self.pay(level, request.query.get("machine_id"), request.query.get("id"))
-        log.info("paid: level %d -> %s", level, purchase_id)
-        return web.json_response({"paid": True, "level": level, "purchase_id": purchase_id})
+        item = int(request.query["item"])
+        ttl = float(request.query.get("ttl", 60))
+        self.pay(item, ttl)
+        log.info("paid: item %d (ttl %.0fs)", item, ttl)
+        return web.json_response({"paid": True, "item": item, "ttl_s": ttl})
 
-    async def _invalid(self, request: web.Request) -> web.Response:
-        level = int(request.query["level"])
-        self.mark_invalid(level, request.query.get("machine_id"))
-        return web.json_response({"invalid": True, "level": level})
-
-    async def _completions(self, request: web.Request) -> web.Response:
-        return web.json_response(self.completions)
+    async def _reports(self, request: web.Request) -> web.Response:
+        return web.json_response([{"kind": r["kind"], "ts": r["ts"]} for r in self.reports])
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="fake purchase server for manual runs")
+    parser = argparse.ArgumentParser(description="fake Monitoni purchase server for manual runs")
     parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--machine-id", default="VM001")
+    parser.add_argument("--token", default="test-token")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     async def run() -> None:
-        fake = FakePurchaseServer(args.machine_id)
+        fake = FakePurchaseServer(args.token)
         await fake.start(port=args.port)
-        log.info("fake purchase server for %s on %s (GET /pay?level=N, /invalid?level=N, "
-                 "/completions)", args.machine_id, fake.url)
+        log.info("fake purchase server on %s (GET /pay?item=N[&ttl=S], GET /reports)", fake.url)
         await asyncio.Event().wait()
 
     asyncio.run(run())

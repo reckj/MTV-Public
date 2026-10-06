@@ -26,6 +26,7 @@ def make_config(tmp_path):
         config.purchase_server.poll_interval_s = 0.01
         config.purchase_server.outbox_backoff_s = [0.05, 0.1, 0.2]
         config.purchase_server.timeout_s = 0.3
+        config.vending.timings.relock_delay_s = 0.05
         for key in ("sleep_timeout_s", "purchase_timeout_s",
                     "door_unlock_timeout_s", "door_alarm_delay_s"):
             setattr(config.vending.timings, key, timings.get(key, LONG))
@@ -52,10 +53,12 @@ async def purchase_fake():
     await fake.stop()
 
 
-def http_purchase(config: Config, fake: FakePurchaseServer) -> HttpPurchaseServer:
-    """An HTTP purchase client pointed at the fake (not started)."""
+def http_purchase(config: Config, fake: FakePurchaseServer,
+                  token: str | None = None) -> HttpPurchaseServer:
+    """An HTTP purchase client pointed at the fake with its token (not started)."""
     config.purchase_server.base_url = fake.url
-    return HttpPurchaseServer(config.purchase_server, config.system.machine_id)
+    config.purchase_server.token = fake.token if token is None else token
+    return HttpPurchaseServer(config.purchase_server)
 
 
 @pytest.fixture

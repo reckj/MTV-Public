@@ -1,17 +1,19 @@
-"""Purchase server: the protocol, the check results, the HTTP client and the mock.
+"""The Monitoni purchase server: protocol, HTTP client and mock.
 
-Wire protocol, as the old machines spoke it (the server exists, we match it):
-  POST <base_url><check_path>    {"machine_id", "level"}
-      200 {"valid": true, "purchase_id": ...}  paid        -> Paid(purchase_id)
-      200 {"valid": false, ...}                rejected    -> Invalid
-      404                                      nothing yet -> NotYet
-      anything else / no answer                            -> PurchaseServerError
-  POST <base_url><complete_path> {"purchase_id", "machine_id", "level", "success"}
-      200 = accepted; anything else = not accepted (the outbox tries again later)
+Wire protocol (notes/purchase-server.md). Every request is a GET with no body and the header
+`Monitoni-Terminal: <token>`; the token identifies the machine and never appears in logs,
+exceptions or status.
+
+  GET <base_url><permission_path>   200 {"HasPermission": true, "Item": N}  -> Permitted(N)
+                                    200 {"HasPermission": false, ...}       -> NotYet()
+                                    anything else                           -> PurchaseServerError
+  GET <base_url><complete_path>     2xx -> accepted: the product was handed out
+  GET <base_url><close_path>        2xx -> accepted: the door is closed again
+
+`Item` is the level that was paid; the machine unlocks it whatever was selected on the screen.
 """
 
 import logging
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,14 +25,16 @@ from monitoni.config import PurchaseServerConfig
 
 log = logging.getLogger(__name__)
 
+TOKEN_HEADER = "Monitoni-Terminal"
+
 
 class PurchaseServerError(Exception):
-    """Transport error, timeout or an unexpected status. The poll loop simply tries again."""
+    """Transport error, timeout or an answer we cannot use. The poll loop simply tries again."""
 
 
 @dataclass(frozen=True)
-class Paid:
-    purchase_id: str
+class Permitted:
+    item: int  # the paid level
 
 
 @dataclass(frozen=True)
@@ -38,12 +42,7 @@ class NotYet:
     pass
 
 
-@dataclass(frozen=True)
-class Invalid:
-    pass
-
-
-CheckResult = Paid | NotYet | Invalid
+PermissionResult = Permitted | NotYet
 
 
 class PurchaseServer(Protocol):
@@ -53,16 +52,20 @@ class PurchaseServer(Protocol):
 
     async def stop(self) -> None: ...
 
-    async def check(self, level: int) -> CheckResult:
-        """Is there a paid, unredeemed purchase for this level? Raises PurchaseServerError."""
+    async def permission(self) -> PermissionResult:
+        """Is a purchase for this machine paid and open? Raises PurchaseServerError."""
         ...
 
-    async def complete(self, purchase_id: str, level: int, success: bool) -> bool:
-        """Tell the server the purchase was handed out (or not). True if the server accepted it."""
+    async def complete(self) -> bool:
+        """The product was handed out (the door opened). True if the server accepted it."""
+        ...
+
+    async def close(self) -> bool:
+        """The door is closed again. True if the server accepted it."""
         ...
 
     def status(self) -> dict:
-        """{reachable, last_ok, last_error}, JSON-serialisable."""
+        """{reachable, last_ok, last_error}, JSON-serialisable, without the token."""
         ...
 
 
@@ -71,9 +74,8 @@ class PurchaseServer(Protocol):
 class HttpPurchaseServer:
     """One httpx client for the daemon's lifetime. No retries here: polling and the outbox retry."""
 
-    def __init__(self, config: PurchaseServerConfig, machine_id: str) -> None:
+    def __init__(self, config: PurchaseServerConfig) -> None:
         self.config = config
-        self.machine_id = machine_id
         self.on_reachability: Callable[[bool], None] = lambda ok: None
         self.reachable: bool | None = None  # unknown until the first request
         self.last_ok: str | None = None
@@ -82,7 +84,8 @@ class HttpPurchaseServer:
 
     async def start(self) -> None:
         self._client = httpx.AsyncClient(base_url=self.config.base_url,
-                                         timeout=self.config.timeout_s)
+                                         timeout=self.config.timeout_s,
+                                         headers={TOKEN_HEADER: self.config.token})
 
     async def stop(self) -> None:
         client, self._client = self._client, None
@@ -92,46 +95,55 @@ class HttpPurchaseServer:
     def status(self) -> dict:
         return {"reachable": self.reachable, "last_ok": self.last_ok, "last_error": self.last_error}
 
-    async def check(self, level: int) -> CheckResult:
-        response = await self._post(self.config.check_path,
-                                    {"machine_id": self.machine_id, "level": level}, (200, 404))
-        if response.status_code == 404:
-            return NotYet()
-        data = response.json() if response.content else None
-        if not isinstance(data, dict):
-            raise PurchaseServerError(f"check answered 200 without a JSON object: "
-                                      f"{response.text!r}")
-        if data.get("valid") is True:
-            purchase_id = data.get("purchase_id")
-            if not isinstance(purchase_id, str) or not purchase_id:
-                raise PurchaseServerError(f"valid purchase without a purchase_id: {data!r}")
-            return Paid(purchase_id)
-        return Invalid()
-
-    async def complete(self, purchase_id: str, level: int, success: bool) -> bool:
-        body = {"purchase_id": purchase_id, "machine_id": self.machine_id, "level": level,
-                "success": success}
+    async def permission(self) -> PermissionResult:
+        path = self.config.permission_path
+        response = await self._get(path, (200,))
         try:
-            await self._post(self.config.complete_path, body, (200,))
+            data = response.json()
+        except ValueError:
+            raise self._fail(f"{path} answered 200 without JSON") from None
+        if not isinstance(data, dict) or "HasPermission" not in data:
+            raise self._fail(f"{path} answered without a HasPermission key")
+        has = data["HasPermission"]
+        if has is False:
+            return NotYet()
+        if has is not True:
+            raise self._fail(f"{path} answered HasPermission={has!r}")
+        item = data.get("Item")
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise self._fail(f"{path} answered HasPermission=true without an integer Item")
+        return Permitted(item)
+
+    async def complete(self) -> bool:
+        return await self._report(self.config.complete_path)
+
+    async def close(self) -> bool:
+        return await self._report(self.config.close_path)
+
+    async def _report(self, path: str) -> bool:
+        try:
+            await self._get(path, range(200, 300))
         except PurchaseServerError as exc:
-            log.warning("completion of %s not accepted: %s", purchase_id, exc)
+            log.warning("%s not accepted: %s", path, exc)
             return False
         return True
 
-    async def _post(self, path: str, body: dict, ok_statuses: tuple[int, ...]) -> httpx.Response:
+    async def _get(self, path: str, ok_statuses) -> httpx.Response:
         """One request. Any exception or unexpected status marks the server unreachable."""
         if self._client is None:
             raise PurchaseServerError("purchase client is not started")
         try:
-            response = await self._client.post(path, json=body)
-        except httpx.HTTPError as exc:
-            self._record(False, f"{type(exc).__name__}: {exc or 'no detail'}")
-            raise PurchaseServerError(self.last_error) from None
+            response = await self._client.get(path)
+        except httpx.HTTPError as exc:  # transport errors and timeouts; messages carry no header
+            raise self._fail(f"{type(exc).__name__}: {exc or 'no detail'}") from None
         if response.status_code not in ok_statuses:
-            self._record(False, f"HTTP {response.status_code} from {path}")
-            raise PurchaseServerError(self.last_error)
+            raise self._fail(f"HTTP {response.status_code} from {path}")
         self._record(True, None)
         return response
+
+    def _fail(self, error: str) -> PurchaseServerError:
+        self._record(False, error)
+        return PurchaseServerError(error)
 
     def _record(self, ok: bool, error: str | None) -> None:
         now = datetime.now(UTC).isoformat(timespec="seconds")
@@ -150,13 +162,13 @@ class HttpPurchaseServer:
 # -- the mock, for mock mode and tests -------------------------------------------
 
 class MockPurchaseServer:
-    """`check` says NotYet until `simulate_payment(level)`, then Paid once; always reachable."""
+    """`permission` says NotYet until `simulate_payment(level)`, then Permitted once; always
+    reachable. `complete`/`close` are recorded in order in `reports`."""
 
     def __init__(self) -> None:
         self.on_reachability: Callable[[bool], None] = lambda ok: None
-        self._paid: set[int] = set()
-        self._invalid: set[int] = set()
-        self.completions: list[dict] = []
+        self._pending: list[int] = []
+        self.reports: list[str] = []
 
     async def start(self) -> None:
         pass
@@ -167,27 +179,24 @@ class MockPurchaseServer:
     def status(self) -> dict:
         return {"reachable": True, "last_ok": None, "last_error": None}
 
-    def simulate_payment(self, level: int) -> None:
+    def simulate_payment(self, level: int, item: int | None = None) -> None:
+        """The next permission answers true with Item = `item` (default: the level paid for)."""
         log.info("mock purchase server: payment simulated for level %d", level)
-        self._paid.add(level)
+        self._pending.append(level if item is None else item)
 
-    def simulate_invalid(self, level: int) -> None:
-        """The next check for this level answers 'known and rejected' (tests only)."""
-        self._invalid.add(level)
-
-    async def check(self, level: int) -> CheckResult:
-        if level in self._invalid:
-            self._invalid.discard(level)
-            return Invalid()
-        if level not in self._paid:
+    async def permission(self) -> PermissionResult:
+        if not self._pending:
             return NotYet()
-        self._paid.discard(level)
-        purchase_id = uuid.uuid4().hex
-        log.info("mock purchase server: valid purchase %s for level %d", purchase_id, level)
-        return Paid(purchase_id)
+        item = self._pending.pop(0)
+        log.info("mock purchase server: permission for item %d", item)
+        return Permitted(item)
 
-    async def complete(self, purchase_id: str, level: int, success: bool) -> bool:
-        log.info("mock purchase server: complete %s level %d success=%s",
-                 purchase_id, level, success)
-        self.completions.append({"purchase_id": purchase_id, "level": level, "success": success})
+    async def complete(self) -> bool:
+        log.info("mock purchase server: complete")
+        self.reports.append("complete")
+        return True
+
+    async def close(self) -> bool:
+        log.info("mock purchase server: close")
+        self.reports.append("close")
         return True
