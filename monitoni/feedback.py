@@ -11,14 +11,14 @@ and swallowed, the flow never sees it. No retries. The mapping (notes/feedback.m
   door_opened                open, that level
   door_alarm, door_forced    alarm, all zones                alarm, looped while in the state
   completing                 thanks, that level (fades to idle)
-  out_of_order               fault                           error once, hardware reason only
+  out_of_order               fault                           error once, except for maintenance
 """
 
 import logging
 from collections.abc import Callable
 
 from monitoni.audio import Audio
-from monitoni.flow import REASON_HARDWARE, Flow, State
+from monitoni.flow import REASON_MAINTENANCE, Flow, State
 from monitoni.leds import Leds
 
 log = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ SOUNDS: dict[State, tuple[str, bool]] = {  # state -> (sound, looped)
     State.DOOR_UNLOCKED: ("success", False),
     State.DOOR_ALARM: ("alarm", True),
     State.DOOR_FORCED: ("alarm", True),
-    State.OUT_OF_ORDER: ("error", False),  # only for reason hardware, see below
+    State.OUT_OF_ORDER: ("error", False),  # a fault (hardware, database); not for maintenance
 }
 
 
@@ -61,8 +61,8 @@ class Feedback:
             self._guard(self.audio.stop_playing)
             self._looping = False
         sound = SOUNDS.get(new)
-        if new is State.OUT_OF_ORDER and self.flow.reason != REASON_HARDWARE:
-            sound = None  # maintenance is silent
+        if new is State.OUT_OF_ORDER and self.flow.reason == REASON_MAINTENANCE:
+            sound = None  # maintenance is someone's choice, not a fault
         if sound is not None:
             name, loop = sound
             self._guard(self.audio.play, name, loop)

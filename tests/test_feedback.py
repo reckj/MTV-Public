@@ -132,6 +132,24 @@ async def test_fault_during_an_alarm_stops_the_loop(make_flow):
                                   ("play", "error", False)]
 
 
+async def test_a_lost_report_is_red_with_the_error_sound(make_flow, monkeypatch):
+    flow, leds, audio, _ = await make_flow()
+
+    async def refuse(kind, level):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(flow.outbox, "enqueue", refuse)
+    await flow.dispatch(Event.SELECT_LEVEL, level=2)
+    flow.purchase.simulate_payment(2)
+    await wait_for(flow, State.DOOR_UNLOCKED)
+    await flow.dispatch(Event.DOOR_OPENED)
+    await flow.dispatch(Event.DOOR_CLOSED)
+    await wait_for(flow, State.OUT_OF_ORDER)
+    assert flow.reason == "database"
+    assert led_calls(leds)[-1] == ("set_pattern", "fault", None)
+    assert audio_calls(audio) == [("play", "success", False), ("play", "error", False)]
+
+
 async def test_maintenance_is_red_but_silent(make_flow):
     flow, leds, audio, _ = await make_flow(maintenance=True)
     assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_MAINTENANCE
