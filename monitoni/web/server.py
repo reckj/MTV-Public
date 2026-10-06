@@ -93,6 +93,7 @@ async def api_command(request: web.Request) -> web.Response:
             if daemon.flow.state is not State.IDLE:
                 return error(409, f"{command} is only allowed in state idle")
             if command == "motor_press":
+                await daemon.flow.dispatch(Event.TOUCH)  # holding TURN is activity: no sleep
                 await daemon.motor.press()
             else:
                 await daemon.motor.release()

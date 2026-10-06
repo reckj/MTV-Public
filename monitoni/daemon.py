@@ -31,7 +31,7 @@ class Daemon:
         self.changed = asyncio.Event()  # set by the flow on every state change
         self.flow = Flow(config, hardware, purchase, self.events, on_change=self._flow_changed)
         self.motor = Motor(config.hardware.motor, hardware, self.events, hardware.events,
-                           lambda: self.flow.state.value)
+                           lambda: self.flow.state.value, on_change=self.changed.set)
         self._started_at: float | None = None
         self._runner: web.AppRunner | None = None
         self._drain_task: asyncio.Task | None = None

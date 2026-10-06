@@ -214,6 +214,24 @@ async def test_motor_press_and_release(client, daemon):
     assert rows == [{"event": "start"}, {"event": "stop", "reason": "release"}]
 
 
+async def test_motor_press_resets_the_sleep_timer(client, make_daemon):
+    daemon = await make_daemon(sleep_timeout_s=0.3)
+    await asyncio.sleep(0.2)
+    await command(client, daemon, command="motor_press")
+    await asyncio.sleep(0.2)
+    assert (await status(client, daemon))["state"] == "idle"  # would have slept at 0.3 s
+    await command(client, daemon, command="motor_release")
+
+
+async def test_motor_changes_are_pushed_over_the_websocket(client, daemon):
+    async with client.ws_connect(daemon.url + "/ws") as ws:
+        await ws.receive_json(timeout=2)
+        await command(client, daemon, command="motor_press")
+        pushed = await ws.receive_json(timeout=0.5)  # well under the 1 s heartbeat
+        assert pushed["motor"]["spindle_open"] is True
+        await command(client, daemon, command="motor_release")
+
+
 async def test_motor_commands_only_in_idle(client, daemon):
     await command(client, daemon, command="select_level", level=1)
     for cmd in ("motor_press", "motor_release"):

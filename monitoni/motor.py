@@ -22,12 +22,14 @@ log = logging.getLogger(__name__)
 
 class Motor:
     def __init__(self, config: MotorConfig, hardware: Hardware, events: EventLog,
-                 faults: asyncio.Queue, state_name: Callable[[], str]) -> None:
+                 faults: asyncio.Queue, state_name: Callable[[], str],
+                 on_change: Callable[[], None] | None = None) -> None:
         self.config = config
         self.hardware = hardware
         self.events = events
         self.faults = faults  # the hardware event queue; a failed sequence puts a fault there
         self.state_name = state_name  # for the event-log rows
+        self.on_change = on_change or (lambda: None)  # the daemon pushes a status on each call
         self.pressed = False
         self.running = False
         self.spindle_open = False
@@ -78,11 +80,13 @@ class Motor:
     async def _start_sequence(self) -> None:
         await self.hardware.set_spindle(True)
         self.spindle_open = True
+        self.on_change()
         await self._wait(self.config.spindle_pre_delay_ms)
         if not self.pressed:
             return  # released during the pre-delay; the release sequence closes the spindle
         await self.hardware.set_motor(True)
         self.running = True
+        self.on_change()
         await self.events.write("motor", self.state_name(), details={"event": "start"})
         self._watchdog = asyncio.create_task(self._watchdog_run(), name="motor-watchdog")
 
@@ -91,12 +95,14 @@ class Motor:
             await self._wait(self.config.spin_after_release_ms)
         await self.hardware.set_motor(False)
         was_running, self.running = self.running, False
+        self.on_change()
         if was_running:
             await self.events.write("motor", self.state_name(),
                                     details={"event": "stop", "reason": reason})
         await asyncio.sleep(self.config.spindle_post_delay_ms / 1000)
         await self.hardware.set_spindle(False)
         self.spindle_open = False
+        self.on_change()
 
     async def _wait(self, ms: int) -> None:
         """Sleep, unless stop() cuts it short."""
@@ -127,6 +133,7 @@ class Motor:
             self.spindle_open = False
         except HardwareError as exc:
             log.error("emergency spindle off failed: %s", exc)
+        self.on_change()
 
     # -- watchdog --------------------------------------------------------------
 
