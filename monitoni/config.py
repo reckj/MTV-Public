@@ -92,6 +92,7 @@ class TimingsConfig(_Strict):
     purchase_timeout_s: float
     door_unlock_timeout_s: float
     door_alarm_delay_s: float
+    relock_delay_s: float = Field(ge=0)  # the lock pin drops back this long after the door opened
 
 
 class VendingConfig(_Strict):
@@ -100,12 +101,16 @@ class VendingConfig(_Strict):
 
 
 class PurchaseServerConfig(_Strict):
+    """The Monitoni server. `token` identifies this machine; it never leaves local.yaml."""
+
     base_url: str
-    check_path: str
+    permission_path: str
     complete_path: str
-    poll_interval_s: float
-    timeout_s: float
-    # waits between completion delivery attempts; the last value repeats
+    close_path: str
+    token: str  # mandatory when the HTTP client is used; checked in __main__, not here
+    poll_interval_s: float = Field(gt=0)
+    timeout_s: float = Field(gt=0)
+    # waits between report delivery attempts; the last value repeats
     outbox_backoff_s: list[Annotated[float, Field(gt=0)]] = Field(min_length=1)
 
 

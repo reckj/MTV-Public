@@ -71,7 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.mock_purchase:
         purchase = MockPurchaseServer()
     else:
-        purchase = HttpPurchaseServer(config.purchase_server, config.system.machine_id)
+        if not config.purchase_server.token:
+            log.error("purchase_server.token: must be set in %s for the Monitoni server "
+                      "(or run with --mock-purchase to simulate payments)", local_path)
+            return 1
+        purchase = HttpPurchaseServer(config.purchase_server)
     return asyncio.run(run(config, hardware, purchase))
 
 

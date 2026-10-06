@@ -70,14 +70,18 @@ vending:
     purchase_timeout_s: 120
     door_unlock_timeout_s: 30
     door_alarm_delay_s: 10
+    relock_delay_s: 0.5        # the lock pin drops back this long after the door opened
 
+# The Monitoni server. Every call is a GET with the header "Monitoni-Terminal: <token>".
 purchase_server:
-  base_url: "http://localhost:5000"   # override in local.yaml; mandatory on a real machine
-  check_path: "/api/purchase/check"
-  complete_path: "/api/purchase/complete"
-  poll_interval_s: 0.5
+  base_url: "https://monitoni.zhdk.ch"
+  permission_path: "/api/vending/permission"
+  complete_path: "/api/vending/complete"
+  close_path: "/api/vending/close"
+  token: ""                             # this machine's token, set in local.yaml; never logged
+  poll_interval_s: 1.0
   timeout_s: 5.0
-  outbox_backoff_s: [1, 2, 5, 15, 60]   # completion delivery retries; the last value repeats
+  outbox_backoff_s: [1, 2, 5, 15, 60]   # report delivery retries; the last value repeats
 
 qr:
   # QR for level N encodes base_url + "?level=" + N: the old machines' pattern, which the

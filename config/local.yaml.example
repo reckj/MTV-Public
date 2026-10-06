@@ -2,7 +2,7 @@
 # Only keys that differ from default.yaml are needed.
 
 system:
-  machine_id: "VM001"
+  machine_id: "VM001"      # label for the log and the status page; not sent to the server
 
 hardware:
   # Both Waveshare modules ship with 192.168.1.254; each needs its own static IP.
@@ -24,7 +24,9 @@ hardware:
     spindle_channel: 2     # relay_core
 
 purchase_server:
-  base_url: "http://purchase.example.org"
+  # The machine's token from its device page in the Monitoni admin (Cubera creates it when the
+  # machine is registered). Mandatory; keep this file private. base_url stays at the default.
+  token: "paste-the-token-here"
 
 qr:
   base_url: "https://www.monitoni.zhdk.ch"

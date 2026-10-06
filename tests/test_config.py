@@ -81,7 +81,7 @@ def test_milestone_1_sections_load():
     config = load_config(DEFAULT_PATH)
     assert config.vending.levels == 10
     assert config.vending.timings.door_alarm_delay_s == 10.0
-    assert config.purchase_server.check_path == "/api/purchase/check"
+    assert config.purchase_server.permission_path == "/api/vending/permission"
     assert str(config.qr.dir) == "data/qr"
     assert str(config.database.path) == "data/monitoni.db"
 
@@ -97,6 +97,19 @@ def test_levels_must_be_positive(tmp_path):
     data = default_data()
     data["vending"]["levels"] = 0
     with pytest.raises(ConfigError, match=r"vending\.levels: "):
+        load_config(write_yaml(tmp_path / "default.yaml", data))
+
+
+def test_purchase_server_section_loads(tmp_path):
+    ps = load_config(DEFAULT_PATH).purchase_server
+    assert ps.base_url == "https://monitoni.zhdk.ch" and ps.token == ""
+    assert (ps.permission_path, ps.complete_path, ps.close_path) == (
+        "/api/vending/permission", "/api/vending/complete", "/api/vending/close")
+    assert ps.poll_interval_s == 1.0 and ps.timeout_s == 5.0
+    assert load_config(DEFAULT_PATH).vending.timings.relock_delay_s == 0.5
+    data = default_data()
+    data["purchase_server"]["check_path"] = "/api/purchase/check"  # Milestone 3 key, gone
+    with pytest.raises(ConfigError, match=r"purchase_server\.check_path: Extra inputs"):
         load_config(write_yaml(tmp_path / "default.yaml", data))
 
 
