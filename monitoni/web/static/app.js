@@ -98,4 +98,6 @@ document.addEventListener("pointerdown", (event) => {
   send({ command: "touch" });
 });
 
-connect();
+// after customer.js and settings.js have run: the first status may arrive while a script is
+// still loading (the parser yields while it fetches), and render() needs both
+document.addEventListener("DOMContentLoaded", connect);
