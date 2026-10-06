@@ -11,7 +11,34 @@ Follow the sections in order; each one builds on the previous.
 Hardware list (Pi, display, relay modules, WLED controller, PoE switch),
 cables, SD card, and a laptop for imaging the card.
 
-_To be written during integration._
+Facts so far (no hardware has been set up on a Pi yet):
+
+- **LED controller**: a Gledopto ESP32 running WLED, on the same local subnet
+  as the relay modules, with a static IP (`default.yaml` assumes
+  192.168.1.102, key `hardware.wled.ip_address`). The daemon sends the strip's
+  colours over ArtNet (UDP port 6454) and checks every 30 s that the
+  controller answers `http://<ip>/json/info`. WLED is configured once, in its
+  own web page, as follows. Open `http://<wled-ip>/` in a browser on the same
+  network, then:
+  1. **Config → LED Preferences**: set the LED count ("Length") to at least
+     the number of pixels on the strip (`hardware.wled.pixel_count`). Save.
+  2. **Config → Sync Interfaces**, section **Realtime**: tick "Receive UDP
+     realtime"; under "Network DMX input" choose Type **Art-Net**, Port
+     **6454**, Multicast off, Start universe **0** (the value of
+     `hardware.wled.universe`), DMX start address **1**, DMX mode **Multi
+     RGB**, Timeout **2500** ms, tick **Force max brightness**, untick "Disable
+     realtime gamma correction" unless the colours look wrong. Save.
+  3. Leave the controller's own effect on something dark (Config → LED
+     Preferences → "Turn LEDs on after power up/reset" off, or a dark default
+     preset): that is what the strip shows while the daemon is not running.
+     While the daemon runs it sends a frame at least once a second, which is
+     what the 2500 ms timeout is for.
+  "Multi RGB" means three DMX channels per pixel, red, green, blue; a strip of
+  more than 170 pixels continues in the next universe, which WLED handles by
+  itself. "Force max brightness" makes the daemon's `led.brightness` the only
+  brightness in play.
+
+_The rest of the list: to be written during integration._
 
 ## 2. Flash the OS with Raspberry Pi Imager
 
@@ -103,6 +130,23 @@ from `config/default.yaml`):
   the same pattern as the old machines (no machine id). Generated PNGs land
   in `data/qr/`; delete a file there to regenerate it after changing the
   value.
+- `hardware.wled.pixel_count` — how many pixels the LED strip has, and
+  `led.zones` — which pixels belong to which level: one `[first, last]` pair
+  per level, level 1 first, both numbers inclusive, pixel 0 being the one
+  next to the controller. Every machine's strip is different, so count on the
+  machine: in the WLED web page, open the segment editor on the main screen,
+  set the segment's start and stop until exactly the pixels behind one level
+  light up (stop is exclusive there, so a segment 12–24 means pixels 12 to
+  23 and the zone is `[12, 23]`), write the pair down, repeat for every
+  level. The ranges must not overlap and must stay below `pixel_count`; the
+  daemon refuses to start otherwise and names the bad entry (`led.zones.3`
+  is the fourth level). The default is ten blocks of twelve pixels.
+- `led.brightness` (0..1, default 0.6) and `hardware.audio.volume` (0..1,
+  default 0.7). Once the settings area exists these two are changed on the
+  machine and stored in `data/runtime.json`, which then wins over the YAML.
+- `hardware.wled.enabled` / `hardware.audio.enabled` — set to `false` on a
+  machine without a strip or without a speaker; the daemon then uses the
+  built-in stand-ins and shows the patterns only in the status.
 
 Both Waveshare modules ship with the same address, 192.168.1.254. Each needs
 its own static IP before the daemon can talk to both; `default.yaml` assumes
@@ -163,6 +207,23 @@ the network or the server. The messages go away with the next successful
 request. In the dev panel, "Outbox: N pending" is the number of `complete` and
 `close` reports the server has not accepted yet; they are retried after 1, 2,
 5, 15 and then every 60 seconds and survive a restart.
+
+The LED strip and the sounds: when the daemon starts it logs `ArtNet to
+<ip>:6454, universe 0, N pixels` and, after the first health poll, `WLED at
+<ip> reachable`; `unreachable: <error>` means the controller does not answer
+on its web port (check the IP, the cable, that WLED is up). The strip itself
+should show all level zones in a dim warm colour in `idle`; if the controller
+is reachable but the strip stays dark or shows WLED's own effect, the ArtNet
+settings in §1 are wrong (most often "Receive UDP realtime" off or the DMX
+mode not "Multi RGB"). In `/api/status`, `leds` shows `reachable`, the
+current `pattern` and `level`; every change of reachability is a `network`
+row `{"component": "wled", "reachable": …}` in the event log. The dev panel
+shows the same as "LEDs: idle · level – · reachable". For audio the start
+log says `audio: 44100 Hz, 2 channel(s), sounds from …`; `audio unavailable,
+sounds are off: <error>` means no audio device was found (on the Pi: check
+that HDMI audio is enabled and the display or an amplifier is connected). A
+dead strip or missing audio never stops the machine from vending. _Setting up
+HDMI audio on the Pi: to be written during integration._
 
 _Real hardware start on a Pi: to be written during integration._
 

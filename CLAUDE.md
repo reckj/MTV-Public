@@ -9,7 +9,9 @@ for years: pinned versions, frozen OS image, no auto-updates.
 - Python 3.11, asyncio. One headless process owns all hardware, the state
   machine, config and the SQLite database. Modbus RTU frames over plain TCP are
   built by hand (no pymodbus; Waveshare transparent mode has no MBAP header).
-- aiohttp: static web UI, localhost API, WebSocket. httpx: purchase server client.
+- aiohttp: static web UI, localhost API, WebSocket. httpx: purchase server client
+  and the WLED health poll. stupidArtnet: ArtNet frames to the LED strip.
+  pygame.mixer: the three sounds over HDMI.
 - pyyaml + pydantic v2 for config (`config/default.yaml`, overlaid by the
   gitignored `config/local.yaml`). aiosqlite for the event log.
 - Front-end: plain HTML/JS/CSS, no framework, no build step. Chromium in
@@ -23,8 +25,11 @@ for years: pinned versions, frozen OS image, no auto-updates.
   `python -m monitoni --mock --mock-purchase` (mock hardware, simulated
   payments). UI at http://127.0.0.1:8080/. `make test` — pytest. `make lint` — ruff.
 - `python -m tests.fake_waveshare --port N --coils 8` (one per module,
-  `--inputs-file` for the DI) and `python -m tests.fake_purchase_server
-  --port N --token T` (`GET /pay?item=N`) — fakes for real mode on a laptop.
+  `--inputs-file` for the DI), `python -m tests.fake_purchase_server
+  --port N --token T` (`GET /pay?item=N`) and `python -m tests.fake_artnet
+  --port N --zones 10x12` (prints zone colour changes; the daemon reaches it
+  with `--fake-artnet 127.0.0.1:N`, which also plays real sounds) — fakes for
+  a laptop.
 
 ## Folder layout
 
@@ -33,8 +38,11 @@ for years: pinned versions, frozen OS image, no auto-updates.
   machine: transition table, timeouts, entry hooks), `motor.py` (hold-to-turn
   sequence with watchdog), `purchase.py` (purchase server protocol, HTTP
   client, mock), `outbox.py` (durable reports), `eventlog.py` (SQLite
-  event log), `hardware/` (`base.py` protocol, `modbus.py` one class per
-  module, `real.py`, `mock.py`), `web/` (aiohttp routes, `static/` UI files).
+  event log), `leds.py` (pattern table, ArtNet sender, mock), `audio.py`
+  (pygame, mock), `feedback.py` (state → pattern and sound), `hardware/`
+  (`base.py` protocol, `modbus.py` one class per module, `real.py`,
+  `mock.py`), `web/` (aiohttp routes, `static/` UI files). `assets/sounds/`:
+  `success.wav`, `alarm.wav`, `error.wav`, the only sounds there are.
 - `config/` — `default.yaml` (checked in), `local.yaml` (per machine). `tests/`
   — pytest. `docs/SETUP.md` — installation guide, grows with every step.
 
@@ -72,6 +80,15 @@ for years: pinned versions, frozen OS image, no auto-updates.
   a door that never opened.
 - Relock rule: `relock_delay_s` after the door opened the level is locked
   again, one command, no retry; a failure is a hardware fault.
+- A `complete`/`close` the outbox cannot store is lost: the vend finishes and
+  the machine goes `out_of_order (database)`, cleared only by a restart or
+  the settings area.
+- Feedback (LEDs, sound) is not safety-relevant and never affects the flow:
+  `feedback.py` is the one place mapping states to patterns and sounds, every
+  call there is guarded, nothing retries. The flow only announces transitions
+  (`on_transition`). A dead strip or missing audio device is status only.
+  LED zones are per machine (`led.zones` in `local.yaml`); colours and
+  brightness are config, `data/runtime.json` overrides brightness and volume.
 - Commands come in over `POST /api/command`; status goes out over the one-way
   WebSocket (on every state change plus a 1 s heartbeat).
 - stdlib `logging` to stdout only (journald captures it). English only, code and docs.
