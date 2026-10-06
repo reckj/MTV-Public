@@ -17,7 +17,7 @@ from monitoni.config import Config
 from monitoni.eventlog import EventLog
 from monitoni.feedback import Feedback
 from monitoni.flow import REASON_HARDWARE, Event, Flow, IllegalTransition, State
-from monitoni.hardware.base import DoorEvent, Hardware, HardwareError, HardwareFault
+from monitoni.hardware.base import DoorEvent, Hardware, HardwareError, HardwareFault, KnownState
 from monitoni.leds import Leds, MockLeds
 from monitoni.motor import Motor
 from monitoni.outbox import Outbox
@@ -218,6 +218,10 @@ class Daemon:
                                         level=self.flow.selected_level,
                                         details={"event": "fault", "error": item.message})
                 await self.flow.dispatch(Event.HARDWARE_FAULT, error=item.message)
+            elif isinstance(item, KnownState):
+                self.motor.reset()  # the relay says off and closed; so does the owner now
+                await self.events.write("hardware", self.flow.state.value,
+                                        details={"event": "known_state", "module": item.module})
             now = loop.time()
             if not self.hardware.healthy():
                 healthy_since = None

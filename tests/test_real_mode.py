@@ -60,8 +60,8 @@ async def test_happy_path_with_the_fake_door_sensor(client, daemon, fakes):
     transitions = [r["details"]["to"] for r in reversed(rows) if r["kind"] == "transition"]
     assert transitions == ["checking_purchase", "door_unlocked", "door_opened", "completing",
                            "idle"]
-    door_rows = [r["details"]["event"] for r in reversed(rows) if r["kind"] == "hardware"]
-    assert door_rows == ["door_opened", "door_closed"]
+    hw_rows = [r["details"]["event"] for r in reversed(rows) if r["kind"] == "hardware"]
+    assert hw_rows == ["known_state", "door_opened", "door_closed"]
 
     code, _ = await command(client, daemon, command="simulate_door", open=True)
     assert code == 403  # dev commands stay mock-only
@@ -285,3 +285,27 @@ async def test_full_vend_lights_the_strip_through_the_fake_receiver(client, real
     finally:
         await daemon.stop()
         await strip.stop()
+
+
+async def test_spindle_opened_in_settings_reads_closed_after_core_reconnects(client, daemon,
+                                                                            fakes):
+    core, levels = fakes
+    async with client.post(daemon.url + "/api/settings/enter", json={"pin": "0000"}) as resp:
+        assert resp.status == 200
+    async with client.post(daemon.url + "/api/settings/spindle", json={"open": True}) as resp:
+        body = await resp.json()
+    assert body["motor"]["spindle_open"] and body["hardware"]["motor"]["spindle_open"]
+    assert core.coils[1] is True
+    await core.drop_connections()
+    body = await wait_for_state(client, daemon, "out_of_order")
+    assert body["reason"] == "hardware"
+    await wait_until(lambda: daemon.hardware.healthy(), "core back with a known state")
+    await wait_until(lambda: not daemon.motor.spindle_open, "the owner reset")
+    body = await status(client, daemon)
+    assert body["motor"] == {"pressed": False, "running": False, "spindle_open": False}
+    assert body["hardware"]["motor"] == {"running": False, "spindle_open": False}
+    assert core.coils[:2] == [False, False]
+    rows = [r["details"] for r in await events(client, daemon) if r["kind"] == "hardware"]
+    assert {"event": "known_state", "module": "relay_core"} in rows
+    body = await wait_for_state(client, daemon, "idle")
+    assert set(body["doors"].values()) == {"locked"}

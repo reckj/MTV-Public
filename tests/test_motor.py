@@ -163,3 +163,15 @@ async def test_set_spindle_is_refused_while_turn_is_held(make_motor):
         await motor.set_spindle(False)
     assert motor.running and motor.spindle_open
     await motor.stop("test")
+
+
+async def test_reset_forgets_the_sequence_state(make_motor):
+    motor = await make_motor()
+    await motor.press()
+    assert motor.running and motor.spindle_open and motor._watchdog is not None
+    motor.reset()  # relay_core came back with motor off and spindle closed
+    assert not motor.active and motor.status() == {"pressed": False, "running": False,
+                                                   "spindle_open": False}
+    assert motor._watchdog is None
+    await motor.stop("test")  # nothing on, nothing written
+    assert motor.hardware.calls[-1] == "set_motor(True)"

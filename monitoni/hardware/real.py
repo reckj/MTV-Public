@@ -3,7 +3,10 @@
 Door locks live on `relay_levels`; motor, spindle lock and the door sensor on `relay_core`.
 Every coil write is read back and the cached state comes from the read-back only. Module
 failures close the module's socket, queue a HardwareFault and are repaired by the reconnect
-loops; nothing here retries a command.
+loops; nothing here retries a command. The modules remember their coils across our restarts
+and a crash mid-sequence can leave the motor on, so after every successful connect (start and
+reconnect) the known state is written once: all doors locked on `relay_levels`, motor off and
+spindle closed on `relay_core`. Until that succeeded the module is not healthy.
 """
 
 import asyncio
@@ -11,7 +14,7 @@ import contextlib
 import logging
 
 from monitoni.config import Config, RelayModuleConfig
-from monitoni.hardware.base import DoorEvent, HardwareError, HardwareFault
+from monitoni.hardware.base import DoorEvent, HardwareError, HardwareFault, KnownState
 from monitoni.hardware.modbus import ModbusTcpModule
 from monitoni.stamp import Flag
 
@@ -30,14 +33,16 @@ class RealHardware:
         self._poll_ok = Flag()  # the last door-sensor read succeeded, with the flip time
         self._motor_on: bool | None = None
         self._spindle_on: bool | None = None
+        self._known = {"relay_core": False, "relay_levels": False}  # known state written?
         self._tasks: list[asyncio.Task] = []
 
     def _module(self, name: str, cfg: RelayModuleConfig) -> ModbusTcpModule:
         return ModbusTcpModule(name, cfg.host, cfg.port, cfg.slave_address, cfg.timeout,
-                               cfg.max_channels, on_lost=self._lost)
+                               cfg.max_channels, on_lost=self._lost, on_connected=self._connected)
 
     def _lost(self, name: str, error: str) -> None:
         """A module's connection went away: its cached states are unknown now; tell the flow."""
+        self._known[name] = False
         if name == "relay_levels":
             self._door_locked = dict.fromkeys(self._channels)
         else:
@@ -46,10 +51,31 @@ class RealHardware:
             self._poll_ok.set(False)
         self.events.put_nowait(HardwareFault(f"{name}: {error}"))
 
+    async def _connected(self, name: str) -> None:
+        """After every successful connect: write the module's known state once, with the
+        read-back. A failure is the same fault as a failed lock_all_doors: logged, and a
+        HardwareFault queued unless the module already queued one for a lost connection."""
+        module = self.core if name == "relay_core" else self.levels
+        try:
+            if name == "relay_core":
+                await self.set_motor(False)
+                await self.set_spindle(False)
+                self.events.put_nowait(KnownState(name))
+                log.info("%s: motor off, spindle closed (known state)", name)
+            else:
+                await self.lock_all_doors()
+                log.info("%s: all doors locked (known state)", name)
+            self._known[name] = True
+        except HardwareError as exc:
+            log.error("%s: known state not established: %s", name, exc)
+            if module.connected:  # a read-back mismatch; a transport failure queued its own
+                self.events.put_nowait(HardwareFault(f"{name}: known state: {exc}"))
+
     # -- lifecycle -----------------------------------------------------------
 
     async def start(self) -> None:
-        """Connect what can be connected; unreachable modules are retried in the background."""
+        """Connect what can be connected (each connect writes the module's known state);
+        unreachable modules are retried in the background."""
         for module in (self.core, self.levels):
             try:
                 await module.connect()
@@ -58,11 +84,6 @@ class RealHardware:
         if self.core.connected:
             with contextlib.suppress(HardwareError):  # the module queued the fault itself
                 self._door_open = await self._read_door_input()
-        if self.levels.connected:
-            try:
-                await self.lock_all_doors()
-            except HardwareError as exc:
-                log.error("%s", exc)
         self._tasks = [
             asyncio.create_task(self.core.reconnect_loop(), name="reconnect-relay_core"),
             asyncio.create_task(self.levels.reconnect_loop(), name="reconnect-relay_levels"),
@@ -83,7 +104,10 @@ class RealHardware:
     # -- status --------------------------------------------------------------
 
     def healthy(self) -> bool:
-        return self.core.connected and self.levels.connected and self._poll_ok.value is True
+        """Both modules connected with their known state written (a stuck relay keeps the machine
+        out of order) and the door sensor reading."""
+        return (self.core.connected and self.levels.connected and all(self._known.values())
+                and self._poll_ok.value is True)
 
     def status(self) -> dict:
         return {

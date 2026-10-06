@@ -296,7 +296,7 @@ function phrase(r) {
     case "network":
       if (d.component === "wled") return d.reachable ? "WLED reachable" : "WLED unreachable";
       return d.purchase_server === "reachable" ? "Server reachable" : "Server unreachable";
-    case "hardware": return { door_opened: "Door sensor open", door_closed: "Door sensor closed", fault: "Hardware fault", relocked: `Shelf relocked${shelf(r)}`, outbox_failed: "Report lost" }[d.event] || `Hardware · ${d.event}`;
+    case "hardware": return { door_opened: "Door sensor open", door_closed: "Door sensor closed", fault: "Hardware fault", relocked: `Shelf relocked${shelf(r)}`, outbox_failed: "Report lost", known_state: "Motor and spindle reset" }[d.event] || `Hardware · ${d.event}`;
     case "outbox": return `${d.delivered ? "Report sent" : "Report queued"} · ${d.kind}${shelf(r)}`;
     case "purchase_check": return `Purchase permitted${shelf(r)}`;
     case "timeout": return `Timeout · ${r.state.replace("_", " ")}`;

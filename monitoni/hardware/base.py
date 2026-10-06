@@ -27,6 +27,14 @@ class HardwareFault:
     message: str
 
 
+@dataclass(frozen=True)
+class KnownState:
+    """Put on Hardware.events after relay_core was (re)connected and motor off / spindle closed
+    were written and read back: the motor module forgets whatever it thought it was doing."""
+
+    module: str
+
+
 class Hardware(Protocol):
     """Owns all physical I/O. The daemon talks to hardware only through this.
 

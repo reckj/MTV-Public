@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from monitoni.hardware.base import DoorEvent, HardwareError, HardwareFault
+from monitoni.hardware.base import DoorEvent, HardwareError, HardwareFault, KnownState
 from monitoni.hardware.real import RealHardware
 from tests.helpers import wait_until
 
@@ -14,25 +14,34 @@ def hx(text: str) -> bytes:
     return bytes.fromhex(text)
 
 
+def drained(hardware: RealHardware) -> RealHardware:
+    """Take the start-up KnownState off the queue so a test sees only what it causes."""
+    assert hardware.events.get_nowait() == KnownState("relay_core")
+    return hardware
+
+
 @pytest.fixture
 async def hardware(real_config):
     hardware = RealHardware(real_config)
     await hardware.start()
-    yield hardware
+    yield drained(hardware)
     await hardware.stop()
 
 
 async def test_start_connects_reads_the_door_and_locks_everything(hardware, fakes):
     core, levels = fakes
     assert hardware.core.connected and hardware.levels.connected and hardware.healthy()
-    assert core.requests[0][:6] == hx("010200000001")  # initial door read
+    # the known state first: motor off and spindle closed, each read back; then the door read
+    assert [r[:6] for r in core.requests[:5]] == [hx("010500000000"), hx("010100000001"),
+                                                  hx("010500010000"), hx("010100010001"),
+                                                  hx("010200000001")]
     assert levels.requests[0][:6] == hx("010500FF0000")  # all coils off
     assert levels.requests[1][:6] == hx("01010000001E")  # read back all 30
     status = hardware.status()
     assert status["mode"] == "real" and status["door_open"] is False
     assert status["doors"] == dict.fromkeys(range(1, 11), "locked")
     assert status["relay_core"]["connected"] and status["relay_core"]["last_error"] is None
-    assert status["motor"] == {"running": None, "spindle_open": None}
+    assert status["motor"] == {"running": False, "spindle_open": False}  # the known state
 
 
 async def test_unlock_and_lock_with_read_back(hardware, fakes):
@@ -97,6 +106,7 @@ async def test_door_poll_filters_a_single_glitch(real_config, fakes):
     real_config.hardware.door_sensor.debounce_count = 5
     hardware = RealHardware(real_config)
     await hardware.start()
+    drained(hardware)
     try:
         fakes[0].inputs[0] = False
         await asyncio.sleep(0.015)  # one or two polls
@@ -112,6 +122,7 @@ async def test_door_polarity_high(real_config, fakes):
     fakes[0].inputs[0] = False
     hardware = RealHardware(real_config)
     await hardware.start()
+    drained(hardware)
     try:
         assert hardware.status()["door_open"] is False
         fakes[0].inputs[0] = True
@@ -150,8 +161,8 @@ async def test_lost_levels_connection_queues_one_fault(hardware, fakes):
     assert isinstance(fault, HardwareFault) and fault.message.startswith("relay_levels:")
     assert hardware.status()["doors"][2] == "unknown" and not hardware.door_locked(2)
     await wait_until(lambda: hardware.levels.connected, "reconnect")
-    assert hardware.status()["doors"][2] == "unknown"  # until something is read back
-    assert hardware.events.empty()
+    await wait_until(lambda: hardware.status()["doors"][2] == "locked", "the known state")
+    assert hardware.events.empty()  # the known state of relay_levels is silent
 
 
 async def test_lost_core_connection_marks_door_and_poll_unknown(hardware, fakes):
@@ -162,7 +173,7 @@ async def test_lost_core_connection_marks_door_and_poll_unknown(hardware, fakes)
     assert not hardware.healthy() and hardware.status()["door_open"] is None
     await wait_until(hardware.healthy, "recovery")
     assert hardware.status()["door_open"] is False
-    assert hardware.events.empty()
+    assert hardware.events.get_nowait() == KnownState("relay_core") and hardware.events.empty()
 
 
 async def test_motor_primitives_with_read_back(hardware, fakes):
@@ -198,3 +209,58 @@ async def test_module_status_says_since_when_the_link_flips(hardware, fakes):
     await core.drop_connections()
     await wait_until(lambda: hardware.status()["door_poll_ok"] is False, "poll stopped")
     assert hardware.status()["door_poll_since"] is not None
+
+
+async def test_known_state_is_written_at_start_and_after_every_reconnect(real_config, fakes):
+    core, levels = fakes
+    core.coils[0] = core.coils[1] = True  # a crash mid-sequence left the motor on, spindle open
+    levels.coils[4] = True  # and a door unlocked
+    hardware = RealHardware(real_config)
+    await hardware.start()
+    try:
+        assert core.coils[:2] == [False, False] and levels.coils == [False] * 30
+        assert hardware.status()["motor"] == {"running": False, "spindle_open": False}
+        assert hardware.healthy()
+        items = []
+        while not hardware.events.empty():
+            items.append(hardware.events.get_nowait())
+        assert items == [KnownState("relay_core")]
+
+        await hardware.set_spindle(True)
+        core.coils[0] = True  # the relay flipped by itself while the link was down
+        await core.drop_connections()
+        await wait_until(lambda: hardware.status()["motor"]["running"] is None, "lost")
+        assert hardware.status()["motor"] == {"running": None, "spindle_open": None}
+        assert not hardware.healthy()
+        await wait_until(hardware.healthy, "reconnected with a known state")
+        assert core.coils[:2] == [False, False]
+        assert hardware.status()["motor"] == {"running": False, "spindle_open": False}
+        items = []
+        while not hardware.events.empty():
+            items.append(hardware.events.get_nowait())
+        assert [type(i).__name__ for i in items] == ["HardwareFault", "KnownState"]
+
+        levels.coils[2] = True
+        await levels.drop_connections()
+        await wait_until(lambda: not hardware.levels.connected, "levels lost")
+        await wait_until(hardware.healthy, "levels back")
+        assert levels.coils == [False] * 30 and hardware.status()["doors"][3] == "locked"
+    finally:
+        await hardware.stop()
+
+
+async def test_a_stuck_motor_relay_keeps_the_module_unhealthy(real_config, fakes, caplog):
+    core, levels = fakes
+    core.coils[0] = True
+    core.ignore_coil_writes = True  # the relay does not switch: the read-back disagrees
+    hardware = RealHardware(real_config)
+    with caplog.at_level(logging.ERROR, logger="monitoni.hardware.real"):
+        await hardware.start()
+    try:
+        assert "relay_core: known state not established" in caplog.text
+        assert hardware.core.connected and not hardware.healthy()
+        assert hardware.status()["motor"]["running"] is None
+        faults = [i for i in list(hardware.events._queue) if isinstance(i, HardwareFault)]
+        assert faults and "known state" in faults[0].message
+    finally:
+        await hardware.stop()

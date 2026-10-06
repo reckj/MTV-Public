@@ -71,6 +71,13 @@ class Motor:
         self._stop_now.set()
         await self._end(reason, immediate=True)
 
+    def reset(self) -> None:
+        """relay_core was (re)connected and the hardware wrote motor off and spindle closed:
+        forget whatever a sequence thought it was doing, so the owner and the relay agree."""
+        self.pressed = self.running = self.spindle_open = False
+        self._cancel_watchdog()
+        self.on_change()
+
     async def set_spindle(self, open_: bool) -> None:
         """The settings tool: open or close the spindle lock on its own. Refused while a TURN
         sequence is pressed or running; a HardwareError ends in the emergency stop like a

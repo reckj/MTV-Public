@@ -11,7 +11,7 @@ cancelled poll task running and `stop()` waiting for it forever.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import NoReturn, TypeVar
 
 from monitoni.hardware.base import HardwareError
@@ -111,6 +111,7 @@ class ModbusTcpModule:
 
     def __init__(self, name: str, host: str, port: int, slave_address: int, timeout: float,
                  max_channels: int, *, on_lost: Callable[[str, str], None] | None = None,
+                 on_connected: Callable[[str], Awaitable[None]] | None = None,
                  backoff: Sequence[float] | None = None,
                  monitor_interval: float | None = None) -> None:
         self.name = name
@@ -121,6 +122,7 @@ class ModbusTcpModule:
         self.max_channels = max_channels
         self.last_error: str | None = None
         self._on_lost = on_lost  # called once each time an open connection is lost
+        self._on_connected = on_connected  # awaited after every successful connect; never raises
         self._backoff = tuple(RECONNECT_BACKOFF if backoff is None else backoff)
         self._monitor_interval = (MONITOR_INTERVAL_S if monitor_interval is None
                                   else monitor_interval)
@@ -152,6 +154,8 @@ class ModbusTcpModule:
         self.last_error = None
         self._link.set(True)
         log.info("%s connected to %s:%d", self.name, self.host, self.port)
+        if self._on_connected is not None:
+            await self._on_connected(self.name)  # the known state is written here
 
     async def close(self) -> None:
         writer, self._writer, self._reader = self._writer, None, None
