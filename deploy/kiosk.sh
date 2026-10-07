@@ -14,9 +14,12 @@ until curl -fs -o /dev/null "$URL"; do
 done
 
 mkdir -p "$PROFILE"
-# full screen, no bars, no gestures, nothing persists, nothing from the network; the exact set
-# is checked on the machine in Milestone 8 Part B
-exec cage -- chromium \
+# The panel is mounted upside down in the machine: inside cage, wlr-randr turns the output by
+# 180° before Chromium starts (the touch follows through deploy/99-monitoni-touch.rules).
+# Chromium: full screen, no bars, no gestures, nothing persists, nothing from the network.
+# --app: a normal browser window is at least 500 px wide, wider than the 400 px panel, and
+# would cut the page off on the right; an app window takes the panel's width.
+exec cage -- /bin/sh -c 'wlr-randr --output HDMI-A-1 --transform 180 && exec "$@"' sh chromium \
   --kiosk \
   --ozone-platform=wayland \
   --user-data-dir="$PROFILE" \
@@ -26,4 +29,4 @@ exec cage -- chromium \
   --disable-features=TranslateUI \
   --disable-component-update --disable-background-networking --disable-sync \
   --no-default-browser-check --disable-breakpad --metrics-recording-only \
-  "$URL"
+  --app="$URL"

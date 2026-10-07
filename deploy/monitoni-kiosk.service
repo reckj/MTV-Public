@@ -4,9 +4,9 @@
 # §5); `systemctl stop monitoni-kiosk` leaves the daemon running (§9).
 [Unit]
 Description=MoniToni kiosk (cage + Chromium on tty1)
-# the daemon first, so there is a page to show; kiosk.sh waits for it as well. The network
-# target is ordering only: nothing here pulls the network in or needs it.
-After=monitoni.service network-online.target systemd-user-sessions.service
+# the daemon first, so there is a page to show; kiosk.sh waits for it as well. Nothing here
+# waits for the network: the page is on 127.0.0.1.
+After=monitoni.service systemd-user-sessions.service
 # tty1 belongs to the kiosk, not to a login prompt
 Conflicts=getty@tty1.service
 After=getty@tty1.service

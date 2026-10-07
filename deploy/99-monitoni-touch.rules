@@ -1,0 +1,5 @@
+# The touch panel (Waveshare 7.9", USB 0712:000a) is mounted upside down in the machine, like
+# the picture (kiosk.sh turns the output by 180°). This matrix turns the touch coordinates the
+# same way, so a tap lands under the finger. Read by libinput inside cage. Put in place by
+# deploy/install.sh as /etc/udev/rules.d/99-monitoni-touch.rules (docs/SETUP.md §5).
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="0712", ENV{ID_MODEL_ID}=="000a", ENV{LIBINPUT_CALIBRATION_MATRIX}="-1 0 1 0 -1 1"

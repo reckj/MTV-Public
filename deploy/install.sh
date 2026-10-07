@@ -6,7 +6,8 @@
 #   1. the user monitoni (if missing) and its groups video, input, render, audio
 #   2. /etc/default/monitoni, the daemon's start options, from deploy/monitoni.default if absent
 #   3. the four units copied into /etc/systemd/system, then systemctl daemon-reload
-#   4. systemctl enable for the daemon, the kiosk and the nightly reload timer
+#   4. the touch rule copied into /etc/udev/rules.d (the panel is upside down), then applied
+#   5. systemctl enable for the daemon, the kiosk and the nightly reload timer
 # Nothing is started here; SETUP §7 and §9 do that. Every line is also written out in SETUP.
 set -eu
 
@@ -60,7 +61,20 @@ done
 systemctl daemon-reload
 echo "systemd: units reloaded"
 
-# 4. Start at boot. `enable` is quiet when the links exist already.
+# 4. The touch rule: turns the touch panel's coordinates by 180°, like the picture. Applied to
+#    the panel at once; the kiosk reads it when it starts.
+rule=99-monitoni-touch.rules
+if cmp -s "$DEPLOY/$rule" "/etc/udev/rules.d/$rule"; then
+  echo "$rule: unchanged"
+else
+  install -m 644 "$DEPLOY/$rule" /etc/udev/rules.d/
+  echo "$rule: copied to /etc/udev/rules.d"
+fi
+udevadm control --reload
+udevadm trigger --subsystem-match=input --action=change
+echo "udev: rules applied"
+
+# 5. Start at boot. `enable` is quiet when the links exist already.
 systemctl enable monitoni.service monitoni-kiosk.service monitoni-kiosk-reload.timer
 echo "enabled at boot: monitoni, monitoni-kiosk, monitoni-kiosk-reload.timer"
 echo "start them now with: sudo systemctl start monitoni monitoni-kiosk monitoni-kiosk-reload.timer"
