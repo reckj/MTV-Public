@@ -9,9 +9,9 @@ for years: pinned versions, frozen OS image, no auto-updates.
 
 ## Stack
 
-- Python 3.11, asyncio. One headless process owns all hardware, the state
-  machine, config and the SQLite database. Modbus RTU frames over plain TCP are
-  built by hand (no pymodbus; Waveshare transparent mode has no MBAP header).
+- Python 3.13 on the Pi (Trixie; code stays 3.11-compatible), asyncio. One
+  headless process owns hardware, state machine, config and SQLite. Modbus RTU
+  frames over TCP are built by hand (no pymodbus; transparent mode, no MBAP).
 - aiohttp: static web UI, localhost API, WebSocket. httpx: purchase server client
   and the WLED health poll. ArtDMX packets to the LED strip are built by hand
   and sent from one UDP socket (no stupidArtnet). pygame.mixer: the three sounds.
@@ -48,10 +48,10 @@ for years: pinned versions, frozen OS image, no auto-updates.
   `settings.*` S0–S8, fonts). `assets/sounds/`: the three sounds.
 - `config/` — `default.yaml` (checked in), `local.yaml` (per machine). `tests/`
   — pytest. `docs/SETUP.md` — installation guide, grows with every step.
-- `deploy/` — the Pi: systemd units (the daemon, its options from
-  `/etc/default/monitoni` = `monitoni.default`; cage + Chromium kiosk on tty1
-  via `kiosk.sh`; the 04:00 kiosk reload timer), `install.sh` (idempotent,
-  mirrored in SETUP §5), `wheels.sh` (aarch64 wheels for an offline install).
+- `deploy/` — the Pi: units (daemon, options in `/etc/default/monitoni` =
+  `monitoni.default`; cage + Chromium app window on tty1 via `kiosk.sh`, turned
+  180° with `99-monitoni-touch.rules`; 04:00 reload timer), `install.sh`
+  (idempotent, mirrored in SETUP §5), `wheels.sh` (wheels for offline install).
 
 ## Conventions
 

@@ -45,26 +45,31 @@ _The rest of the list: to be written during integration._
 
 ## 2. Flash the OS with Raspberry Pi Imager
 
-_Written ahead of the Pi (Milestone 8 Part A); every step is verified on the
-machine in Part B._
+_Performed on vm001 on 2026-10-07._
 
-Done on the laptop, with a micro SD card in a card reader. The card is the
-**install card**: the machine runs from its SSD in the end (§3), but the Pi
-needs a system on a card first, because only a running system can make the
-SSD visible and copy itself onto it.
+Done on the laptop, with a micro SD card in a card reader: at least 16 GB,
+better 32 GB (the system with the kiosk takes about 6 GB; vm001's 8 GB card
+was left with 1 GB free). The card is the **install card**. If the machine
+has an SSD, it runs from the SSD in the end (§3), but the Pi needs a system on
+a card first, because only a running system can make the SSD visible and copy
+itself onto it. Without an SSD (vm001 has none) the machine simply runs from
+the card.
 
 1. Install Raspberry Pi Imager from https://www.raspberrypi.com/software/
    (free, for Mac, Windows and Linux) and start it.
 2. **Choose Device**: Raspberry Pi 5. **Choose OS**: Raspberry Pi OS (other) →
    **Raspberry Pi OS Lite (64-bit)**, the version without a desktop (the
-   kiosk brings its own display program, §9). **Choose Storage**: the card.
-   Next.
+   kiosk brings its own display program, §9). Since autumn 2026 this is
+   Debian 13 "Trixie" with Python 3.13, which is what the machine runs. Do
+   not pick the entries marked **Legacy**: those are the previous release,
+   Bookworm. **Choose Storage**: the card. Next.
 3. "Would you like to apply OS customisation settings?" → **Edit Settings**:
    - General: tick *Set hostname* and enter `vm001` (the machine id in lower
      case; `vm002` for the next machine). Tick *Set username and password*:
      username `monitoni`, a password of your choice; write it down, it is the
-     SSH login and the `sudo` password on the machine. *Configure wireless
-     LAN*: **unticked** (the machine is on Ethernet). Tick *Set locale
+     SSH login and the `sudo` password on the machine. Wi-Fi: leave the
+     network name in the Wi-Fi section **empty**, which configures no Wi-Fi
+     (the machine is on Ethernet). Tick *Set locale
      settings*: time zone `Europe/Zurich`; the keyboard layout does not
      matter.
    - Services: tick *Enable SSH*, choose *Use password authentication*.
@@ -84,22 +89,26 @@ SSD visible and copy itself onto it.
    - `cmdline.txt`: one long line. Add to its end, after a space, on the same
      line:
      ```
-     video=HDMI-A-1:400x1280M@60 consoleblank=0
+     video=HDMI-A-1:400x1280M@60 consoleblank=0 fbcon=rotate:2
      ```
      The first part sets the display to its native 400×1280 portrait mode on
-     the Pi's HDMI0 port (the HDMI socket next to the USB-C power socket);
-     nothing is rotated. The second keeps the text console from going black.
+     the Pi's HDMI0 port (the HDMI socket next to the USB-C power socket).
+     The second keeps the text console from going black. The third turns the
+     console text by 180°: the panel is mounted upside down in the machine.
+     The kiosk turns its picture and the touch the same way by itself (§5).
    Save both files, eject the card (Finder: the eject symbol next to `bootfs`).
 
 ## 3. First boot and OS settings
 
-_Written ahead of the Pi (Part A); verified in Part B._
+_Performed on vm001 on 2026-10-07._
 
 The display on HDMI0 and its USB cable (the touch panel) in the Pi, Ethernet
 in, the install card in, then power. The first boot takes a minute or two
 (the card is resized, the SSH keys are made, the Pi restarts once); the
 display shows white console text and ends at a `vm001 login:` prompt.
-Nothing to type there.
+Nothing to type there. **Check on the display**: the text reads upright as
+the panel sits in the machine. If it is upside down, the `fbcon=rotate:2`
+from §2 is missing in `cmdline.txt`.
 
 **Log in over SSH** from the laptop, on the same network as the machine:
 
@@ -120,13 +129,16 @@ jumps to the buttons; Esc goes back):
 sudo raspi-config
 ```
 
-- 1 System Options → S5 Boot / Auto Login → **B1 Console**: a text console
-  without automatic login; the kiosk service (§9) takes the display over.
-- 1 System Options → S6 Network at Boot → **No**: the machine must start even
-  with the network cable out.
+- 1 System Options → S5 Boot → **B1 Console**: a text console; the kiosk
+  service (§9) takes the display over. (Lite starts like this already; this
+  only confirms it.)
+- 1 System Options → S6 Auto Login → **No**.
 - 5 Localisation Options: set by Imager already; L2 Timezone should read
   Europe/Zurich.
 - Finish. If it asks to reboot, Yes; log in again afterwards.
+
+The machine starts without the network cable as well: nothing of MoniToni
+waits for the network at boot.
 
 **Time.** The purchase server speaks HTTPS, which needs a roughly correct
 clock. Check:
@@ -147,13 +159,19 @@ leaves), then `sudo systemctl restart systemd-timesyncd`.
 battery (a small rechargeable cell on the two-pin "BAT" connector between
 the USB-C socket and the HDMI sockets) the time survives a power cut even
 without a network, so the machine can vend right after a restart. Check the
-clock reads:
+clock reads: in the output of `timedatectl` above, the line `RTC time:`
+shows the clock's time in UTC (two hours behind Zurich in summer, one in
+winter). Whether a battery is fitted:
 
 ```
-sudo hwclock -r
+cat /sys/class/rtc/rtc0/battery_voltage
 ```
 
-It prints the current time. The official battery is charged by the Pi only
+prints the battery's voltage in millionths of a volt: about 3000000 with a
+charged battery, a small number (vm001: 4273) without one. Without a battery
+the clock is lost at a power cut and comes back from the network (NTP) once
+the machine is online; until then HTTPS to the purchase server may fail. The
+official battery is charged by the Pi only
 when told so: add to `/boot/firmware/config.txt`, under `[all]`, the line
 
 ```
@@ -175,9 +193,12 @@ Expected: `mmcblk0` (the card, with `mmcblk0p1` and `mmcblk0p2`) **and**
 §2 is not in `/boot/firmware/config.txt` (`cat /boot/firmware/config.txt`
 shows the file), or the SSD or its HAT is not seated; fix it, `sudo reboot`,
 check again. If it still does not appear, the machine runs from the card:
-skip the next step, everything below works the same.
+skip the next step, everything below works the same. (vm001, 2026-10-07: the
+PCIe connector comes up but nothing is on it; vm001 has no SSD and runs from
+the card.)
 
-**Install onto the SSD.** Right after a fresh `sudo reboot` and login, with
+**Install onto the SSD** (not yet performed on a machine). Copy only if the
+SSD is larger than the card: `lsblk` shows both sizes. Right after a fresh `sudo reboot` and login, with
 nothing else running, the whole card is copied to the SSD byte by byte, so
 the SSD ends up with the same system and the same settings:
 
@@ -253,30 +274,39 @@ _Configuring the Pi's network: to be written during integration._
 
 ## 5. Install the application
 
-_Written ahead of the Pi (Part A); verified in Part B, where the versions
-that were installed are filled in._
+_Performed on vm001 on 2026-10-07._
 
 Logged in over SSH as `monitoni` (§3). This section needs internet on the
 machine for `apt` and `git`; the Python packages can come from a USB stick
 instead (below).
 
 **System packages.** cage shows one program full screen on the display,
-Chromium is that program (it shows the page), git fetches the application,
-python3-venv makes the application's own Python environment:
+Chromium is that program (it shows the page), wlr-randr turns the picture
+(the panel is upside down), git fetches the application, python3-venv makes
+the application's own Python environment (the last two are on Lite already):
 
 ```
 sudo apt update
-sudo apt install cage chromium git python3-venv
+sudo apt install cage chromium wlr-randr git python3-venv
 ```
 
-`Y` when asked. Write down what was installed; these versions stay frozen on
+`Y` when asked: about 190 packages, 300 MB to download, 1 GB on the card,
+a few minutes. Write down what was installed; these versions stay frozen on
 the machine, `apt` is never run again except by hand:
 
 ```
-apt list --installed 2>/dev/null | grep -E '^(cage|chromium|git|python3-venv)/'
+apt list --installed 2>/dev/null | grep -E '^(cage|chromium|wlr-randr|git|python3-venv)/'
 ```
 
-Installed on vm001 in Part B: _to be filled in_.
+Installed on vm001 on 2026-10-07:
+
+```
+cage/stable,now 0.3.1-1~bpo13+1+rpt2 arm64
+chromium/stable,now 1:154.0.8037.92-1~deb13u1+rpt1 arm64
+git/stable,now 1:2.47.3-0+deb13u1 arm64
+python3-venv/stable,now 3.13.5-1 arm64
+wlr-randr/stable,now 0.4.1-1 arm64
+```
 
 **The application** goes to `/opt/monitoni`, owned by the user `monitoni`:
 
@@ -287,8 +317,8 @@ git clone https://github.com/reckj/MTV-Public.git /opt/monitoni
 cd /opt/monitoni
 ```
 
-**The Python environment** inside it. Python 3.11 is the one Raspberry Pi OS
-Bookworm ships (`python3 --version` prints 3.11.x):
+**The Python environment** inside it. Python 3.13 is the one Raspberry Pi OS
+Trixie ships (`python3 --version` prints 3.13.x):
 
 ```
 python3 -m venv .venv
@@ -298,8 +328,8 @@ python3 -m venv .venv
 The second line downloads the pinned packages from the internet. **Without
 internet** on the machine the packages come from a USB stick: on the laptop,
 in the repository, run `deploy/wheels.sh` once (it needs the laptop's
-`.venv` from `make install` and internet; it fills `wheels/`, 24 files,
-about 25 MB), copy the `wheels` folder onto a USB stick, put the stick in
+`.venv` from `make install` and internet; it fills `wheels/` with the
+packages for the Pi, 24 files, about 26 MB), copy the `wheels` folder onto a USB stick, put the stick in
 the Pi, then:
 
 ```
@@ -340,7 +370,10 @@ It prints every step. What it does:
    (`monitoni.service`, `monitoni-kiosk.service`,
    `monitoni-kiosk-reload.service`, `monitoni-kiosk-reload.timer`) and tells
    systemd to read them (`systemctl daemon-reload`).
-4. Enables the daemon, the kiosk and the nightly reload timer
+4. Copies the touch rule `deploy/99-monitoni-touch.rules` into
+   `/etc/udev/rules.d/` and applies it: the panel is mounted upside down, so
+   the touch coordinates are turned by 180° like the picture.
+5. Enables the daemon, the kiosk and the nightly reload timer
    (`systemctl enable …`), so they start at every boot.
 
 Nothing is started yet: §6 configures the machine first, §7 and §9 start the
@@ -563,8 +596,10 @@ dead strip or missing audio never stops the machine from vending.
 On the Pi the daemon runs as a service (§9) whose unit sets `SDL_AUDIODRIVER=alsa`
 and `AUDIODEV` to the HDMI output, so pygame goes straight to ALSA; Raspberry Pi
 OS Lite has no PipeWire. The device name is what `aplay -L` lists on the machine
-for the display's HDMI port (`vc4hdmi0` for HDMI0); the value in
-`deploy/monitoni.service` is a placeholder until Part B settles it.
+for the display's HDMI port (`vc4hdmi0` for HDMI0); `plughw:CARD=vc4hdmi0,DEV=0`
+opens without error on vm001, but the sound has not been heard yet (the
+display's audio jack is not reachable in its case), so the value in
+`deploy/monitoni.service` is still marked as a placeholder.
 
 **The settings area.** Tap the small gear in the top right corner of the
 "Select a level" screen (or of the "Out of order" screen), type the PIN on the
@@ -618,7 +653,7 @@ _To be written during integration._
 
 ## 9. Run as a service
 
-_Written ahead of the Pi (Part A); verified in Part B._
+_Performed on vm001 on 2026-10-07._
 
 §5's `install.sh` put three services in place; once §6 is done they are
 started by hand this once and come up by themselves at every boot from then
@@ -638,16 +673,25 @@ sudo systemctl start monitoni-kiosk-reload.timer
   `AUDIODEV`).
 - `monitoni-kiosk` — the display: cage with Chromium full screen on the Pi's
   first console (tty1), started after the daemon. `deploy/kiosk.sh` waits
-  until the page answers at http://127.0.0.1:8080/, then starts the browser
-  with a profile that is made fresh under `/run` at every start: nothing the
-  browser saves survives, and the page loads nothing from the network. Also
-  restarted after 5 seconds if it exits.
+  until the page answers at http://127.0.0.1:8080/, turns the picture by 180°
+  (the panel is upside down; the touch follows through the rule from §5), then
+  starts the browser as an app window (a normal browser window is at least
+  500 px wide and would cut the 400 px page off) with a profile that is made
+  fresh under `/run` at every start: nothing the browser saves survives, and
+  the page loads nothing from the network. Also restarted after 5 seconds if
+  it exits.
 - `monitoni-kiosk-reload.timer` — restarts the kiosk every night at 04:00
   local time. The daemon is not touched; the fresh page connects and shows
   whatever state the machine is in.
 
 After `start monitoni-kiosk` the display switches from the console text to
-the "Select a shelf" screen within a few seconds.
+the "Select a shelf" screen within a few seconds. **Check on the display**:
+the screen is upright, the ten shelves are centred with nothing cut off on
+the right, and a tap lands under the finger: tap the gear in the top right
+corner (the PIN screen opens), Cancel, then shelf 10 at the bottom (its QR
+code screen opens), Cancel. A mouse arrow is shown while a keyboard with a
+touchpad (the K400) is plugged in; touch does not move it. Unplug the
+keyboard's receiver when the console is no longer needed.
 
 **Looking at them:**
 

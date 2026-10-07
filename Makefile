@@ -1,5 +1,5 @@
 # Run from the repo root. PYTHON picks the interpreter used to create .venv;
-# the target machine has python3 = 3.11, so that is the default.
+# the target machine has python3 = 3.13 (Raspberry Pi OS Trixie); the code stays 3.11-compatible.
 PYTHON ?= python3
 VENV := .venv
 BIN := $(VENV)/bin
