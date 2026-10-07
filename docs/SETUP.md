@@ -691,7 +691,9 @@ the right, and a tap lands under the finger: tap the gear in the top right
 corner (the PIN screen opens), Cancel, then shelf 10 at the bottom (its QR
 code screen opens), Cancel. A mouse arrow is shown while a keyboard with a
 touchpad (the K400) is plugged in; touch does not move it. Unplug the
-keyboard's receiver when the console is no longer needed.
+keyboard's receiver when the console is no longer needed. From then on,
+after every power-on, the shelf list appears by itself about 20 seconds
+after the boot text, with nothing typed (vm001: 16 s).
 
 **Looking at them:**
 
