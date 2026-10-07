@@ -90,7 +90,17 @@ function connect() {
 // every touch is activity: the daemon restarts its sleep or settings timer (at most once a
 // second; a TURN press is a touch of its own)
 let lastTouch = 0;
+// the tap that wakes the machine only wakes it: the shelf list appears under the finger before
+// it lifts, and the click that follows must not select a shelf
+let swallowClick = false;
+document.addEventListener("click", (event) => {
+  if (!swallowClick) return;
+  swallowClick = false;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 document.addEventListener("pointerdown", (event) => {
+  swallowClick = document.body.dataset.state === "sleep";
   if (document.body.classList.contains("disconnected") || event.target.closest(".turn")) return;
   const now = Date.now();
   if (now - lastTouch < TOUCH_THROTTLE_MS) return;
