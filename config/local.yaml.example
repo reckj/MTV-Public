@@ -45,7 +45,7 @@ led:
 purchase_server:
   # The machine's token from its device page in the Monitoni admin (Cubera creates it when the
   # machine is registered). Mandatory; keep this file private. base_url stays at the default.
-  token: "paste-the-token-here"
+  token: ""                # paste the token between the quotes
 
 qr:
   base_url: "https://www.monitoni.zhdk.ch"

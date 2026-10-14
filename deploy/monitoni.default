@@ -5,5 +5,8 @@
 # Monitoni purchase server with the machine's token.
 # While commissioning, with no modules on the network and no token yet, use
 #   MONITONI_OPTS="--mock --mock-purchase"
-# (simulated hardware and payments; the dev commands in docs/SETUP.md §7 work then).
+# (simulated hardware and payments; the dev commands in docs/SETUP.md §7 work then);
+# with the token in config/local.yaml but no modules yet
+#   MONITONI_OPTS="--mock"
+# (real payments, simulated hardware).
 MONITONI_OPTS=""

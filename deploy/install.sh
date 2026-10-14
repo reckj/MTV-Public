@@ -90,4 +90,4 @@ fi
 # 6. Start at boot. `enable` is quiet when the links exist already.
 systemctl enable monitoni.service monitoni-kiosk.service monitoni-kiosk-reload.timer
 echo "enabled at boot: monitoni, monitoni-kiosk, monitoni-kiosk-reload.timer"
-echo "start them now with: sudo systemctl start monitoni monitoni-kiosk monitoni-kiosk-reload.timer"
+echo "nothing started yet: configure first (docs/SETUP.md §6), then start (§7, §9)"

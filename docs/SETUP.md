@@ -417,9 +417,26 @@ session only gets them after logging out and in again.
 `config/local.yaml`: machine id, relay module IPs, WLED IP, purchase server
 URL, settings PIN.
 
-Keys an installer must set in `config/local.yaml` so far (copy
-`config/local.yaml.example` as a start; every key not listed keeps its value
-from `config/default.yaml`):
+_Performed on vm001 on 2026-10-14 (commissioning: mock hardware, the test
+server, the token)._
+
+Create the file from the example and make it readable for `monitoni` only
+(it will hold the machine's token):
+
+```
+cd /opt/monitoni
+cp config/local.yaml.example config/local.yaml
+chmod 600 config/local.yaml
+nano config/local.yaml
+```
+
+(Ctrl+O, Enter saves, Ctrl+X leaves.) `ls -l config/local.yaml` then starts
+with `-rw-------`. Every key that is not in the file keeps its value from
+`config/default.yaml`. The keys an installer sets:
+
+- `hardware.mode` — `real` (the default) or `mock`. While the relay modules
+  are not on the network yet, `mock`; the daemon option `--mock` (below)
+  does the same and wins.
 
 - `system.name` and `system.location` — what customers see in the top bar of
   the screen: `name` is the big wordmark (default `"Monitoni"`), `location`
@@ -440,8 +457,12 @@ from `config/default.yaml`):
 - `purchase_server.token` — this machine's token, mandatory. It comes from the
   machine's device page in the Monitoni admin; Cubera creates it when the
   machine is registered. Keep `local.yaml` private, the token is the machine's
-  identity. `purchase_server.base_url` normally stays at the default
-  `https://monitoni.zhdk.ch`.
+  identity. Paste it between the quotes, `token: "…"`. With the token empty
+  the daemon refuses to start and says so (unless it runs with
+  `--mock-purchase`). `purchase_server.base_url` stays at the default
+  `https://monitoni.zhdk.ch` in service; while commissioning, with a token
+  for Monitoni's test server, it is `"https://dev.monitoni.zhdk.ch"` (add
+  the line under `purchase_server:`, two spaces in front, like `token:`).
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). The codes are drawn
   from this value on demand; change it, restart, done.
@@ -489,32 +510,39 @@ do not edit it by hand while the daemon runs.
 **The daemon's start options** live in one file, `/etc/default/monitoni`
 (put there by `install.sh`, §5), with one line: `MONITONI_OPTS=""`. The
 empty value is the machine's setting: the modules from `local.yaml` and the
-Monitoni server with the machine's token. On day one, with no modules on the
-network and no token yet, set it to the commissioning value:
+Monitoni server with the machine's token. While commissioning, set it to one
+of two values:
 
 ```
 sudo nano /etc/default/monitoni
 ```
 
-and make the line read `MONITONI_OPTS="--mock --mock-purchase"` (Ctrl+O,
-Enter saves, Ctrl+X leaves). The daemon then simulates the hardware and the
-payments, as on the laptop (§7), whatever `hardware.mode` says. When the
-token is in `local.yaml` and the modules are reachable, set the line back to
-`MONITONI_OPTS=""`. Either change is applied by:
+- `MONITONI_OPTS="--mock --mock-purchase"`: no modules on the network and no
+  token yet. The daemon simulates the hardware and the payments, as on the
+  laptop (§7), whatever `hardware.mode` says.
+- `MONITONI_OPTS="--mock"`: the token is in `local.yaml`, the modules are not
+  on the network yet. Payments are real (against `purchase_server.base_url`),
+  the hardware is simulated.
+
+(Ctrl+O, Enter saves, Ctrl+X leaves.) When the token is in `local.yaml` and
+the modules are reachable, set the line back to `MONITONI_OPTS=""`. Any
+change is applied by:
 
 ```
 sudo systemctl restart monitoni
 ```
 
-On the development laptop none of these are set; mock mode runs on the
-defaults. Setting them on a Pi: _to be written during integration._
+On the development laptop neither file is needed; mock mode runs on the
+defaults.
 
 ## 7. First start
 
 Run the daemon by hand, open the UI in a browser, check mock versus real
 hardware mode.
 
-Steps performed so far (on a development laptop):
+_On a development laptop; on vm001 on 2026-10-14 by hand before §9 (below)._
+
+On the laptop, in the repository:
 
 ```
 cd monitoni
@@ -675,6 +703,40 @@ scp monitoni@vm001.local:/opt/monitoni/data/monitoni.db ./monitoni-$(date +%F).d
 table `events`). Copying while the daemon runs
 is safe; the copy may miss the last second.
 
+**On the Pi, by hand, before the services (§9).** Once, to see the daemon
+start with this machine's `local.yaml` before it runs as a service. Logged in
+as `monitoni`, with the same options as in `/etc/default/monitoni` (§6):
+
+```
+cd /opt/monitoni
+.venv/bin/python -m monitoni --mock
+```
+
+(or `--mock --mock-purchase` without a token). It logs `daemon started,
+machine VM001, hardware mock, UI at http://127.0.0.1:8080` and stays in the
+foreground. From a second SSH login:
+
+```
+curl -s 127.0.0.1:8080/api/status
+```
+
+The answer is one long line; look for `"hardware_mode": "mock"` and
+`"purchase_mode": "real"` (`"mock"` with `--mock-purchase`). With a real
+purchase client, `simulate_payment` and `simulate_server` above answer
+`403`; the server is checked by selecting a shelf:
+
+```
+curl -s -X POST 127.0.0.1:8080/api/command -H 'Content-Type: application/json' -d '{"command":"select_level","level":1}'
+curl -s 127.0.0.1:8080/api/status
+curl -s -X POST 127.0.0.1:8080/api/command -H 'Content-Type: application/json' -d '{"command":"cancel"}'
+```
+
+In the second answer, under `purchase_server`: `"reachable": true` is good;
+`false` with `last_error` names the cause (see the paragraph on "Payment
+currently not possible" above). Stop the daemon with Ctrl+C in the first
+login; §9 then starts it as a service. The display still shows the console:
+page is on the screen only from §9 on.
+
 _Real hardware start on a Pi: to be written during integration._
 
 ## 8. Verification
@@ -685,7 +747,7 @@ _To be written during integration._
 
 ## 9. Run as a service
 
-_Performed on vm001 on 2026-10-07._
+_Performed on vm001 on 2026-10-07; again on a fresh card on 2026-10-14._
 
 §5's `install.sh` put three services in place; once §6 is done they are
 started by hand this once and come up by themselves at every boot from then
