@@ -50,8 +50,8 @@ for years: pinned versions, frozen OS image, no auto-updates.
   — pytest. `docs/SETUP.md` — installation guide, grows with every step.
 - `deploy/` — the Pi: units (daemon, options in `/etc/default/monitoni` =
   `monitoni.default`; cage + Chromium app window on tty1 via `kiosk.sh`, turned
-  180° with `99-monitoni-touch.rules`; 04:00 reload timer), `install.sh`
-  (idempotent, mirrored in SETUP §5), `wheels.sh` (wheels for offline install).
+  180° with `99-monitoni-touch.rules`; 04:00 reload timer), journald cap,
+  `install.sh` (idempotent, mirrored in SETUP §5), `wheels.sh` (offline wheels).
 
 ## Conventions
 

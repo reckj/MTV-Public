@@ -7,7 +7,8 @@
 #   2. /etc/default/monitoni, the daemon's start options, from deploy/monitoni.default if absent
 #   3. the four units copied into /etc/systemd/system, then systemctl daemon-reload
 #   4. the touch rule copied into /etc/udev/rules.d (the panel is upside down), then applied
-#   5. systemctl enable for the daemon, the kiosk and the nightly reload timer
+#   5. the journald drop-in copied into /etc/systemd/journald.conf.d (log capped at 100 MB)
+#   6. systemctl enable for the daemon, the kiosk and the nightly reload timer
 # Nothing is started here; SETUP §7 and §9 do that. Every line is also written out in SETUP.
 set -eu
 
@@ -74,7 +75,19 @@ udevadm control --reload
 udevadm trigger --subsystem-match=input --action=change
 echo "udev: rules applied"
 
-# 5. Start at boot. `enable` is quiet when the links exist already.
+# 5. The system log: capped at 100 MB and one month, so it cannot fill the card. journald
+#    is restarted only when the file changed.
+mkdir -p /etc/systemd/journald.conf.d
+conf=/etc/systemd/journald.conf.d/monitoni.conf
+if cmp -s "$DEPLOY/journald-monitoni.conf" "$conf"; then
+  echo "$conf: unchanged"
+else
+  install -m 644 "$DEPLOY/journald-monitoni.conf" "$conf"
+  systemctl restart systemd-journald
+  echo "$conf: copied, journald restarted"
+fi
+
+# 6. Start at boot. `enable` is quiet when the links exist already.
 systemctl enable monitoni.service monitoni-kiosk.service monitoni-kiosk-reload.timer
 echo "enabled at boot: monitoni, monitoni-kiosk, monitoni-kiosk-reload.timer"
 echo "start them now with: sudo systemctl start monitoni monitoni-kiosk monitoni-kiosk-reload.timer"

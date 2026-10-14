@@ -48,7 +48,7 @@ _The rest of the list: to be written during integration._
 _Performed on vm001 on 2026-10-07._
 
 Done on the laptop, with a micro SD card in a card reader: at least 16 GB,
-better 32 GB (the system with the kiosk takes about 6 GB; vm001's 8 GB card
+better 32 GB (the system with the kiosk takes about 4 GB; vm001's 8 GB card
 was left with 1 GB free). The card is the **install card**. If the machine
 has an SSD, it runs from the SSD in the end (§3), but the Pi needs a system on
 a card first, because only a running system can make the SSD visible and copy
@@ -59,7 +59,7 @@ the card.
    (free, for Mac, Windows and Linux) and start it.
 2. **Choose Device**: Raspberry Pi 5. **Choose OS**: Raspberry Pi OS (other) →
    **Raspberry Pi OS Lite (64-bit)**, the version without a desktop (the
-   kiosk brings its own display program, §9). Since autumn 2026 this is
+   kiosk brings its own display program, §9). Since autumn 2025 this is
    Debian 13 "Trixie" with Python 3.13, which is what the machine runs. Do
    not pick the entries marked **Legacy**: those are the previous release,
    Bookworm. **Choose Storage**: the card. Next.
@@ -100,7 +100,7 @@ the card.
 
 ## 3. First boot and OS settings
 
-_Performed on vm001 on 2026-10-07._
+_Performed on vm001 on 2026-10-07; again on a fresh card on 2026-10-14._
 
 The display on HDMI0 and its USB cable (the touch panel) in the Pi, Ethernet
 in, the install card in, then power. The first boot takes a minute or two
@@ -132,7 +132,8 @@ sudo raspi-config
 - 1 System Options → S5 Boot → **B1 Console**: a text console; the kiosk
   service (§9) takes the display over. (Lite starts like this already; this
   only confirms it.)
-- 1 System Options → S6 Auto Login → **No**.
+- 1 System Options → S6 Auto Login: it asks "Would you like to
+  automatically log in to the console?" → **No**.
 - 5 Localisation Options: set by Imager already; L2 Timezone should read
   Europe/Zurich.
 - Finish. If it asks to reboot, Yes; log in again afterwards.
@@ -270,11 +271,29 @@ Facts so far (no network step has been performed on a Pi yet):
   not possible — please wait" instead of a QR code, and the reports of vends
   that already happened wait in the outbox until the server answers again.
 
-_Configuring the Pi's network: to be written during integration._
+**Check now** (vm001, 2026-10-14, on the network's DHCP):
+
+```
+ip -br addr show eth0
+```
+
+prints `eth0`, `UP` and the machine's address (vm001: `10.21.56.20/21`). If
+there is no address after `UP`, the cable or the switch port is the problem.
+
+```
+curl -I https://monitoni.zhdk.ch
+```
+
+The first line of the answer is `HTTP/1.1 200 OK`: the machine reaches the
+purchase server. `Could not resolve host` means no internet or no name
+server on this network; `SSL certificate problem` means the clock is wrong
+(§3).
+
+_A static IP for the machine: to be written during integration._
 
 ## 5. Install the application
 
-_Performed on vm001 on 2026-10-07._
+_Performed on vm001 on 2026-10-07; again on a fresh card on 2026-10-14._
 
 Logged in over SSH as `monitoni` (§3). This section needs internet on the
 machine for `apt` and `git`; the Python packages can come from a USB stick
@@ -290,19 +309,29 @@ sudo apt update
 sudo apt install cage chromium wlr-randr git python3-venv
 ```
 
-`Y` when asked: about 190 packages, 300 MB to download, 1 GB on the card,
-a few minutes. Write down what was installed; these versions stay frozen on
+`Y` when asked: about 160–190 packages, 300 MB to download, about 1 GB on the card,
+a few minutes. Then:
+
+```
+sudo apt clean
+```
+
+On Trixie apt already deletes the downloaded packages after installing;
+`apt clean` removes apt's own cache files as well (about 130 MB on vm001),
+which apt rebuilds the next time it runs. Write down what was installed;
+these versions stay frozen on
 the machine, `apt` is never run again except by hand:
 
 ```
 apt list --installed 2>/dev/null | grep -E '^(cage|chromium|wlr-randr|git|python3-venv)/'
 ```
 
-Installed on vm001 on 2026-10-07:
+The versions are whatever the Raspberry Pi OS mirror offers on the day of
+the install. Installed on vm001 on 2026-10-14:
 
 ```
 cage/stable,now 0.3.1-1~bpo13+1+rpt2 arm64
-chromium/stable,now 1:154.0.8037.92-1~deb13u1+rpt1 arm64
+chromium/stable,now 1:155.0.8059.39-1~deb13u1+rpt1 arm64
 git/stable,now 1:2.47.3-0+deb13u1 arm64
 python3-venv/stable,now 3.13.5-1 arm64
 wlr-randr/stable,now 0.4.1-1 arm64
@@ -373,7 +402,10 @@ It prints every step. What it does:
 4. Copies the touch rule `deploy/99-monitoni-touch.rules` into
    `/etc/udev/rules.d/` and applies it: the panel is mounted upside down, so
    the touch coordinates are turned by 180° like the picture.
-5. Enables the daemon, the kiosk and the nightly reload timer
+5. Copies `deploy/journald-monitoni.conf` to
+   `/etc/systemd/journald.conf.d/monitoni.conf`: the system log is kept to
+   100 MB and one month, so it cannot fill the card over the years.
+6. Enables the daemon, the kiosk and the nightly reload timer
    (`systemctl enable …`), so they start at every boot.
 
 Nothing is started yet: §6 configures the machine first, §7 and §9 start the

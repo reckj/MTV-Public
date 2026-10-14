@@ -356,8 +356,10 @@ async def test_hardware_fault_from_every_state(make_flow, state):
     assert flow.state is State.OUT_OF_ORDER and flow.reason == REASON_HARDWARE
     assert flow.selected_level is None and flow.purchase_id is None and flow.countdown_s is None
     assert_all_locked(flow)
-    row = (await flow.events.recent(1))[0]
-    assert row["kind"] == "transition" and row["details"]["event"] == "hardware_fault"
+    # The newest transition is the fault; other rows (an outbox report) may land after it.
+    row = next(r for r in await flow.events.recent(20) if r["kind"] == "transition")
+    assert row["details"]["event"] == "hardware_fault"
+    assert row["details"]["from"] == state.value and row["details"]["to"] == "out_of_order"
     assert row["details"]["error"] == "relay_core: connection closed"
     assert flow.status()["reason"] == "hardware"
 
