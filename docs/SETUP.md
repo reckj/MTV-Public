@@ -461,7 +461,7 @@ with `-rw-------`. Every key that is not in the file keeps its value from
   the daemon refuses to start and says so (unless it runs with
   `--mock-purchase`). `purchase_server.base_url` stays at the default
   `https://monitoni.zhdk.ch` in service; while commissioning, with a token
-  for Monitoni's test server, it is `"https://dev.monitoni.zhdk.ch"` (add
+  for Monitoni's test server, it is `"https://test.monitoni.zhdk.ch"` (add
   the line under `purchase_server:`, two spaces in front, like `token:`).
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). The codes are drawn
