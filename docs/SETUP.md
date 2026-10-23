@@ -289,7 +289,41 @@ purchase server. `Could not resolve host` means no internet or no name
 server on this network; `SSL certificate problem` means the clock is wrong
 (§3).
 
-_A static IP for the machine: to be written during integration._
+**Static addresses of the modules** (vm001, 2026-10-23). The relay modules and
+the WLED controller get their addresses from the machine's router by DHCP,
+with a reservation per device so the address never changes. The network
+administrator makes the reservations from the devices' MAC addresses (the
+WLED controller's **Ethernet** MAC, not the WiFi MAC on its Info page) and
+restarts the router once. The daemon talks to the addresses in
+`config/local.yaml` (§6), so the two must agree:
+
+| Device | MAC | Address | `local.yaml` key |
+|---|---|---|---|
+| Waveshare 8-ch Module C (motor, spindle, door input) | `04:EE:E8:12:93:7A` | `10.21.63.221` | `hardware.relay_core.host` |
+| Waveshare 30-ch relay module (door locks) | `04:EE:E8:1E:02:B6` | `10.21.63.220` | `hardware.relay_levels.host` |
+| Gledopto WLED controller | `20:E7:C8:6A:E3:7C` | `10.21.63.219` | `hardware.wled.ip_address` |
+
+If a module ever gets a different address (reservation lost, router
+replaced, module replaced), the daemon starts anyway, shows "Out of order"
+to customers and marks the module red in the settings area (S1) with the
+address it tried; it reconnects by itself as soon as the module answers at
+the configured address again. Either fix the reservation or change the key
+in `local.yaml` and restart the daemon; never both halfway.
+
+Check from the Pi, nothing is switched by this:
+
+```
+ping -c 2 10.21.63.220
+ping -c 2 10.21.63.221
+ping -c 2 10.21.63.219
+```
+
+Each prints two replies. On 2026-10-23 the two relay modules answered and
+the WLED controller did not (open, see §10).
+
+The machine itself still runs on a plain DHCP lease (`10.21.56.20/21` on
+2026-10-23). The application does not need a fixed address for the Pi; a
+reservation only keeps the SSH address stable for maintenance.
 
 ## 5. Install the application
 
@@ -418,7 +452,8 @@ session only gets them after logging out and in again.
 URL, settings PIN.
 
 _Performed on vm001 on 2026-10-14 (commissioning: mock hardware, the test
-server, the token)._
+server, the token) and on 2026-10-23 (the modules' static addresses, real
+mode, the test server's QR URLs; values at the end of this section)._
 
 Create the file from the example and make it readable for `monitoni` only
 (it will hold the machine's token):
@@ -436,7 +471,7 @@ with `-rw-------`. Every key that is not in the file keeps its value from
 
 - `hardware.mode` — `real` (the default) or `mock`. While the relay modules
   are not on the network yet, `mock`; the daemon option `--mock` (below)
-  does the same and wins.
+  does the same and wins. vm001 runs `real` since 2026-10-23.
 
 - `system.name` and `system.location` — what customers see in the top bar of
   the screen: `name` is the big wordmark (default `"Monitoni"`), `location`
@@ -445,7 +480,9 @@ with `-rw-------`. Every key that is not in the file keeps its value from
 - `system.machine_id` — a label for the log and the settings screens; the
   server identifies the machine by its token, not by this.
 - `hardware.relay_core.host`, `hardware.relay_levels.host`,
-  `hardware.wled.ip_address` — the modules' IP addresses.
+  `hardware.wled.ip_address` — the modules' IP addresses, the ones reserved
+  on the router (§4). Write the MAC next to each as a comment, so the next
+  person can match them against the router.
 - `hardware.door_locks.channels` — the `relay_levels` channel for level 1,
   2, … in order (default `[1, 2, …, 10]`). Confirm against the wiring.
 - `hardware.door_sensor.di_index`, `di_active` — which digital input on
@@ -540,6 +577,34 @@ sudo systemctl restart monitoni
 
 On the development laptop neither file is needed; mock mode runs on the
 defaults.
+
+**vm001 as set on 2026-10-23** (`local.yaml`, apart from the token and the
+unchanged defaults):
+
+```
+hardware:
+  mode: real
+  relay_core:
+    host: "10.21.63.221"        # Waveshare 8-ch Module C, MAC 04:EE:E8:12:93:7A
+  relay_levels:
+    host: "10.21.63.220"        # Waveshare 30-ch, MAC 04:EE:E8:1E:02:B6
+  wled:
+    ip_address: "10.21.63.219"  # Gledopto WLED, Ethernet MAC 20:E7:C8:6A:E3:7C
+    pixel_count: 120
+purchase_server:
+  base_url: "https://test.monitoni.zhdk.ch"   # commissioning only
+  token: "…"                                  # the machine's token, never shared
+qr:
+  urls:
+    1: "https://test.monitoni.zhdk.ch/qr/OSVcQJH7"
+    2: "https://test.monitoni.zhdk.ch/qr/UNvHkk7B"
+```
+
+`/etc/default/monitoni` has `MONITONI_OPTS=""` since the same day. Still at
+their defaults and **not yet confirmed against the wiring**:
+`hardware.door_locks.channels` (the first test on 2026-10-23 switched relay
+channel 1 but the shelf-1 lock did not release, §10), `door_sensor`,
+`motor`, `led.zones`. `settings.pin` is still `0000`.
 
 ## 7. First start
 
@@ -873,6 +938,28 @@ sudo systemctl stop monitoni-kiosk monitoni
 
 ## 10. Troubleshooting
 
-Common problems and how to check them.
+Common problems and how to check them. Started 2026-10-23; grows with every
+commissioning day.
 
-_To be written during integration._
+- **A module shows red in S1 / customers see "Out of order".** The daemon
+  cannot reach the module at the address in `local.yaml`. `ping` the address
+  (§4); if there is no reply, check the module's power and link light, then
+  the router's reservation against the MAC. The daemon reconnects by itself
+  once the module answers; nothing to restart.
+- **Unlock in S2 clicks but the door does not release.** The click is the
+  relay inside the 30-ch module; the daemon has written the channel and read
+  it back, so the software side is done. What is missing is between the
+  relay contact and the lock: the lock's supply, the COM wiring on the module
+  or the channel being a different shelf. Look at the channel LEDs on the
+  module while tapping Unlock, and measure at the lock. Then set
+  `hardware.door_locks.channels` to match. Seen on vm001, shelf 1,
+  2026-10-23 (open).
+- **Where are the door and motor commands logged?** In the event log
+  (settings area, S8, kinds `command`, `motor`, `hardware`), not in
+  `journalctl`. The journal has the daemon's start, state changes and
+  faults.
+- **WLED controller unreachable.** The daemon logs `WLED at <ip>
+  unreachable` every 30 s and S1 marks LEDs red; the machine keeps selling.
+  Check the controller's power and link light, then whether it holds the
+  reserved address (§4). `curl http://<ip>/json/info` answers with JSON
+  when it is there. Open on vm001 since 2026-10-23.
