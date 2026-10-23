@@ -49,6 +49,10 @@ purchase_server:
 
 qr:
   base_url: "https://www.monitoni.zhdk.ch"
+  # Interim: where the server issues one URL per level, list them; levels without a line
+  # encode <base_url>?level=<N>. The settings area (QR codes) shows what each level encodes.
+  # urls:
+  #   1: "https://test.monitoni.zhdk.ch/qr/XXXXXXXX"
 
 settings:
   pin: "0000"              # CHANGE THIS: 4 to 8 digits; the daemon warns at start while it is 0000

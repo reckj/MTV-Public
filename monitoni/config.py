@@ -149,6 +149,10 @@ class PurchaseServerConfig(_Strict):
 
 class QrConfig(_Strict):
     base_url: str  # the QR for level N encodes base_url + "?level=" + N; rendered on demand
+    # Interim: level -> full URL where the server issues one per level. A level with an entry
+    # encodes that URL; the others fall back to the pattern above. Goes when the server offers
+    # an endpoint the machine can fetch the URLs from.
+    urls: dict[Annotated[int, Field(ge=1)], str] = {}
 
 
 class SettingsConfig(_Strict):

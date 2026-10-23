@@ -208,6 +208,16 @@ def test_settings_section_loads():
     assert not hasattr(config.system, "maintenance_mode") and not hasattr(config.qr, "dir")
 
 
+def test_qr_urls_is_empty_by_default_and_keyed_by_level(tmp_path):
+    assert load_config(DEFAULT_PATH).qr.urls == {}
+    local = write_yaml(tmp_path / "local.yaml",
+                       {"qr": {"urls": {1: "https://test.monitoni.zhdk.ch/qr/OSVcQJH7"}}})
+    assert load_config(DEFAULT_PATH, local).qr.urls == {1: "https://test.monitoni.zhdk.ch/qr/OSVcQJH7"}
+    bad = write_yaml(tmp_path / "bad.yaml", {"qr": {"urls": {0: "https://example.test/x"}}})
+    with pytest.raises(ConfigError, match=r"qr\.urls\.0"):
+        load_config(DEFAULT_PATH, bad)
+
+
 @pytest.mark.parametrize("pin", ["123", "123456789", "12a4", 1234, ""],
                          ids=["short", "long", "letters", "number", "empty"])
 def test_pin_must_be_4_to_8_digits_as_a_string(tmp_path, pin):

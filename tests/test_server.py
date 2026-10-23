@@ -5,6 +5,7 @@ import asyncio
 import aiohttp
 import pytest
 
+from monitoni.config import QrConfig
 from monitoni.daemon import Daemon
 from monitoni.hardware.base import HardwareError, HardwareFault
 from monitoni.hardware.mock import MockHardware
@@ -209,7 +210,25 @@ async def test_qr_svg_is_a_bare_path_without_a_quiet_zone(client, daemon):
 
 
 def test_qr_data_matches_the_old_machines():
-    assert qr_data("https://www.monitoni.zhdk.ch", 3) == "https://www.monitoni.zhdk.ch?level=3"
+    qr = QrConfig(base_url="https://www.monitoni.zhdk.ch")
+    assert qr_data(qr, 3) == "https://www.monitoni.zhdk.ch?level=3"
+
+
+def test_qr_data_prefers_the_levels_own_url():
+    """Interim: qr.urls maps a level to the URL the server issued for it; the others keep
+    the pattern."""
+    qr = QrConfig(base_url="https://www.monitoni.zhdk.ch",
+                  urls={1: "https://test.monitoni.zhdk.ch/qr/OSVcQJH7"})
+    assert qr_data(qr, 1) == "https://test.monitoni.zhdk.ch/qr/OSVcQJH7"
+    assert qr_data(qr, 3) == "https://www.monitoni.zhdk.ch?level=3"
+
+
+async def test_qr_urls_reach_the_api(client, daemon):
+    daemon.config.qr.urls = {2: "https://test.monitoni.zhdk.ch/qr/UNvHkk7B"}
+    async with client.get(daemon.url + "/api/qr/2.json") as resp:
+        assert await resp.json() == {"level": 2, "data": "https://test.monitoni.zhdk.ch/qr/UNvHkk7B"}
+    async with client.get(daemon.url + "/api/qr/3.json") as resp:
+        assert await resp.json() == {"level": 3, "data": "https://www.monitoni.zhdk.ch?level=3"}
 
 
 async def test_simulate_server_flips_the_mock_purchase_server(client, daemon):

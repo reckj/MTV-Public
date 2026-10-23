@@ -466,6 +466,12 @@ with `-rw-------`. Every key that is not in the file keeps its value from
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). The codes are drawn
   from this value on demand; change it, restart, done.
+- `qr.urls` — interim, for a server that issues one URL per level instead
+  (the test server does: `https://test.monitoni.zhdk.ch/qr/<code>`). Map the
+  level to its URL, one line per level, as in `local.yaml.example`; a level
+  without a line keeps the `?level=<N>` pattern. The settings area, QR codes
+  screen, shows what each level encodes. The key goes away once the server
+  offers the URLs for the machine to fetch.
 - `settings.pin` — the PIN for the settings area on the touchscreen, 4 to 8
   digits, written as a string in quotes (`pin: "4711"`). The default is
   `"0000"`; every start with the default logs the line `settings.pin is still

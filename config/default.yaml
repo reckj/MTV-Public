@@ -124,6 +124,9 @@ qr:
   # QR for level N encodes base_url + "?level=" + N: the old machines' pattern, which the
   # purchase server expects. Rendered in memory on demand; no files.
   base_url: "https://www.monitoni.zhdk.ch"
+  # Interim: where the server issues one opaque URL per level instead, map the level to it
+  # here (local.yaml); a level without an entry uses the pattern above.
+  urls: {}
 
 # The settings area on the machine (gear icon, PIN). SETUP.md tells the installer to set the
 # PIN in local.yaml; the daemon warns at every start while it is still 0000.

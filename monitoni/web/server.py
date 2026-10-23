@@ -11,6 +11,7 @@ import qrcode
 from aiohttp import web
 from qrcode.image.svg import SvgPathImage
 
+from monitoni.config import QrConfig
 from monitoni.eventlog import FILTERS
 from monitoni.flow import Event, IllegalTransition, State
 from monitoni.hardware.base import HardwareError
@@ -153,12 +154,12 @@ async def api_command(request: web.Request) -> web.Response:
 async def api_qr(request: web.Request) -> web.Response:
     """The level's QR code as an SVG path without a quiet zone and without a fill: the page
     inlines it, colours the modules and surrounds it with the cream plate. A pure function of
-    qr.base_url and the level, rendered on every request (a few milliseconds)."""
+    the qr config and the level, rendered on every request (a few milliseconds)."""
     daemon = request.app[DAEMON]
     level = int(request.match_info["level"])
     if not 1 <= level <= daemon.config.vending.levels:
         return error(404, f"level must be 1..{daemon.config.vending.levels}")
-    svg = qr_svg(qr_data(daemon.config.qr.base_url, level))
+    svg = qr_svg(qr_data(daemon.config.qr, level))
     return web.Response(text=svg, content_type="image/svg+xml")
 
 
@@ -168,14 +169,15 @@ async def api_qr_json(request: web.Request) -> web.Response:
     level = int(request.match_info["level"])
     if not 1 <= level <= daemon.config.vending.levels:
         return error(404, f"level must be 1..{daemon.config.vending.levels}")
-    return web.json_response({"level": level, "data": qr_data(daemon.config.qr.base_url, level)})
+    return web.json_response({"level": level, "data": qr_data(daemon.config.qr, level)})
 
 
-def qr_data(base_url: str, level: int) -> str:
-    """What the QR code for a level encodes: the old machines' pattern, which the
-    existing purchase server expects. The machine id travels in the purchase check
-    request, not in the QR."""
-    return f"{base_url}?level={level}"
+def qr_data(qr: QrConfig, level: int) -> str:
+    """What the QR code for a level encodes: the level's own URL where `qr.urls` has one
+    (interim, until the server offers the URLs to fetch), otherwise the old machines'
+    pattern, which the existing purchase server expects. The machine id travels in the
+    purchase check request, not in the QR."""
+    return qr.urls.get(level) or f"{qr.base_url}?level={level}"
 
 
 class _QrPath(SvgPathImage):
