@@ -23,12 +23,16 @@ Facts so far (no hardware has been set up on a Pi yet):
   1. **Config → LED Preferences**: set the LED count ("Length") to at least
      the number of pixels on the strip (`hardware.wled.pixel_count`). Save.
   2. **Config → Sync Interfaces**, section **Realtime**: tick "Receive UDP
-     realtime"; under "Network DMX input" choose Type **Art-Net** (the Port
-     field is then greyed out or gone: Art-Net always uses 6454, do not look
-     for it), Multicast off, Start universe **0** (the value of
-     `hardware.wled.universe`), DMX start address **1**, DMX mode **Multi
-     RGB**, Timeout **2500** ms, tick **Force max brightness**, untick "Disable
-     realtime gamma correction" unless the colours look wrong. Save.
+     realtime"; under "Network DMX input" choose Type **Art-Net**; the Port
+     field then reads **6454**. The dropdown is the port: if the port reads
+     5568 the type is still E1.31 and nothing from the daemon arrives, even
+     though the controller stays reachable. Multicast off, Start universe
+     **0** (the value of `hardware.wled.universe`), DMX start address **1**,
+     DMX mode **Multi RGB**, Timeout **2500** ms, tick **Force max
+     brightness**, untick "Disable realtime gamma correction" unless the
+     colours look wrong. Save, then **reboot the controller** (Config →
+     Security & Updates → Reboot WLED, or pull its power for a few seconds):
+     a changed port only takes effect after a reboot.
   3. Leave the controller's own effect on something dark (Config → LED
      Preferences → "Turn LEDs on after power up/reset" off, or a dark default
      preset). The daemon switches the strip off when it is stopped cleanly;
@@ -962,4 +966,13 @@ commissioning day.
   unreachable` every 30 s and S1 marks LEDs red; the machine keeps selling.
   Check the controller's power and link light, then whether it holds the
   reserved address (§4). `curl http://<ip>/json/info` answers with JSON
-  when it is there. Open on vm001 since 2026-10-23.
+  when it is there. Seen on vm001 2026-10-23 (controller off the network),
+  back by 2026-10-28.
+- **LEDs green in S1 but the strip ignores the daemon** (shows WLED's own
+  effect, or nothing happens on S4 White). Green only means the controller
+  answers HTTP. Open `http://<ip>/json/info` in a browser: while the daemon
+  runs, `live` must be `true`, `lm` `"Art-Net"` and `lip` the Pi's address.
+  If `live` is `false`, open `http://<ip>/json/cfg` and look at `if.live`:
+  `port` must be 6454 and `dmx.uni` 0 (§1 item 2); after changing the port
+  reboot the controller. Seen on vm001 2026-10-30 (port 5568, universe 1),
+  fixed the same day from the Pi.
