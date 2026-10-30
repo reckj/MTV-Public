@@ -298,14 +298,16 @@ the WLED controller get their addresses from the machine's router by DHCP,
 with a reservation per device so the address never changes. The network
 administrator makes the reservations from the devices' MAC addresses (the
 WLED controller's **Ethernet** MAC, not the WiFi MAC on its Info page) and
-restarts the router once. The daemon talks to the addresses in
+restarts the router once. WLED's own Info page and `/json/info` show only
+the WiFi MAC; the Ethernet MAC is the WiFi MAC + 3 (here `…7C` → `…7F`) and
+is what the router reservation needs. The daemon talks to the addresses in
 `config/local.yaml` (§6), so the two must agree:
 
 | Device | MAC | Address | `local.yaml` key |
 |---|---|---|---|
 | Waveshare 8-ch Module C (motor, spindle, door input) | `04:EE:E8:12:93:7A` | `10.21.63.221` | `hardware.relay_core.host` |
 | Waveshare 30-ch relay module (door locks) | `04:EE:E8:1E:02:B6` | `10.21.63.220` | `hardware.relay_levels.host` |
-| Gledopto WLED controller | `20:E7:C8:6A:E3:7C` | `10.21.63.219` | `hardware.wled.ip_address` |
+| Gledopto WLED controller | `20:E7:C8:6A:E3:7F` | `10.21.63.219` | `hardware.wled.ip_address` |
 
 If a module ever gets a different address (reservation lost, router
 replaced, module replaced), the daemon starts anyway, shows "Out of order"
@@ -593,7 +595,7 @@ hardware:
   relay_levels:
     host: "10.21.63.220"        # Waveshare 30-ch, MAC 04:EE:E8:1E:02:B6
   wled:
-    ip_address: "10.21.63.219"  # Gledopto WLED, Ethernet MAC 20:E7:C8:6A:E3:7C
+    ip_address: "10.21.63.219"  # Gledopto WLED, Ethernet MAC 20:E7:C8:6A:E3:7F
     pixel_count: 120
 purchase_server:
   base_url: "https://test.monitoni.zhdk.ch"   # commissioning only
