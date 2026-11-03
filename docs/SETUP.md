@@ -21,7 +21,12 @@ Facts so far (no hardware has been set up on a Pi yet):
   own web page, as follows. Open `http://<wled-ip>/` in a browser on the same
   network, then:
   1. **Config → LED Preferences**: set the LED count ("Length") to at least
-     the number of pixels on the strip (`hardware.wled.pixel_count`). Save.
+     the number of pixels on the strip (`hardware.wled.pixel_count`), the
+     LED type and colour order of the strip (vm001: WS2812 RGB, GRB), and
+     **Relay GPIO 18 with Invert ticked**. On the GL-C-616WL the relay
+     switches the V+ of the output terminals; without it the strip has no
+     power and stays dark whatever the data pin sends. Leave "Turn LEDs on
+     after power up/reset" ticked: the relay follows WLED's on/off. Save.
   2. **Config → Sync Interfaces**, section **Realtime**: tick "Receive UDP
      realtime"; under "Network DMX input" choose Type **Art-Net**; the Port
      field then reads **6454**. The dropdown is the port: if the port reads
@@ -33,13 +38,23 @@ Facts so far (no hardware has been set up on a Pi yet):
      colours look wrong. Save, then **reboot the controller** (Config →
      Security & Updates → Reboot WLED, or pull its power for a few seconds):
      a changed port only takes effect after a reboot.
-  3. Leave the controller's own effect on something dark (Config → LED
-     Preferences → "Turn LEDs on after power up/reset" off, or a dark default
-     preset). The daemon switches the strip off when it is stopped cleanly;
-     after a crash or a pulled cable the strip keeps its last frame until the
-     2500 ms timeout and then shows the controller's own state, so that state
-     should be dark. While the daemon runs it sends a frame at least once a
-     second, which is what the timeout is for.
+  3. Make the controller's own state **on and black**: on the main page set
+     the colour to black with the solid effect, brightness full, light on;
+     save it as preset 1 "dark" (Presets → add, "Use current state"); then
+     Config → LED Preferences → "Apply preset at boot" = 1. Save. Do not use
+     "off" as the dark state: with the relay configured, off cuts the
+     strip's power and the daemon's frames light nothing. The daemon sends a
+     dark frame when it is stopped cleanly; after a crash or a pulled cable
+     the strip keeps its last frame until the 2500 ms timeout and then
+     shows this preset, i.e. nothing. While the daemon runs it sends a frame
+     at least once a second, which is what the timeout is for.
+  4. **Power.** The output V+ terminals carry the input voltage unregulated.
+     vm001 runs controller and strip from the Type-C port (5 V, 3 A wall
+     adapter, not a PC port): keep the current limiter (LED Preferences,
+     "Maximum PSU current") well below 3 A, 2000 mA at most. A 24 V terminal
+     supply would destroy a 5 V strip; then the strip needs its own 5 V
+     supply with a common GND and the controller's V+ output stays
+     unconnected.
   "Multi RGB" means three DMX channels per pixel, red, green, blue; a strip of
   more than 170 pixels continues in the next universe, which WLED handles by
   itself. "Force max brightness" makes the daemon's `led.brightness` the only
@@ -596,7 +611,7 @@ hardware:
     host: "10.21.63.220"        # Waveshare 30-ch, MAC 04:EE:E8:1E:02:B6
   wled:
     ip_address: "10.21.63.219"  # Gledopto WLED, Ethernet MAC 20:E7:C8:6A:E3:7F
-    pixel_count: 120
+    pixel_count: 72             # M5Stack SK6812 5 V, 120/m, 72 pixels (2026-11-03)
 purchase_server:
   base_url: "https://test.monitoni.zhdk.ch"   # commissioning only
   token: "…"                                  # the machine's token, never shared
@@ -978,3 +993,9 @@ commissioning day.
   `port` must be 6454 and `dmx.uni` 0 (§1 item 2); after changing the port
   reboot the controller. Seen on vm001 2026-10-30 (port 5568, universe 1),
   fixed the same day from the Pi.
+- **LEDs green in S1, `live` true, but the strip stays dark** (S4 White
+  shows nothing). The controller's output has no power: Relay GPIO not set
+  (§1 item 1), or WLED's own state is "off" (§1 item 3), which opens the
+  relay. Check `http://<ip>/json/state`: `on` must be `true`; in
+  `http://<ip>/json/cfg` `hw.relay.pin` must be 18. Seen on vm001
+  2026-11-03 (relay pin -1, then "off"); fixed the same day.
