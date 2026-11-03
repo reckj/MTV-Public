@@ -612,6 +612,18 @@ hardware:
   wled:
     ip_address: "10.21.63.219"  # Gledopto WLED, Ethernet MAC 20:E7:C8:6A:E3:7F
     pixel_count: 72             # M5Stack SK6812 5 V, 120/m, 72 pixels (2026-11-03)
+led:
+  zones:                        # pixel 0 at the bottom level (10), level 1 at the far end
+    - [65, 71]                  # level 1 (top)
+    - [58, 64]
+    - [50, 57]
+    - [43, 49]
+    - [36, 42]
+    - [29, 35]
+    - [22, 28]
+    - [14, 21]
+    - [7, 13]
+    - [0, 6]                    # level 10 (bottom, controller end)
 purchase_server:
   base_url: "https://test.monitoni.zhdk.ch"   # commissioning only
   token: "…"                                  # the machine's token, never shared
@@ -625,7 +637,8 @@ qr:
 their defaults and **not yet confirmed against the wiring**:
 `hardware.door_locks.channels` (the first test on 2026-10-23 switched relay
 channel 1 but the shelf-1 lock did not release, §10), `door_sensor`,
-`motor`, `led.zones`. `settings.pin` is still `0000`.
+`motor`. `led.zones` confirmed on the machine 2026-11-03 (shelves 1, 5, 10
+checked in S4). `settings.pin` is still `0000`.
 
 ## 7. First start
 
