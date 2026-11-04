@@ -762,9 +762,11 @@ On the Pi the daemon runs as a service (§9) whose unit sets `SDL_AUDIODRIVER=al
 and `AUDIODEV` to the HDMI output, so pygame goes straight to ALSA; Raspberry Pi
 OS Lite has no PipeWire. The device name is what `aplay -L` lists on the machine
 for the display's HDMI port (`vc4hdmi0` for HDMI0); `plughw:CARD=vc4hdmi0,DEV=0`
-opens without error on vm001, but the sound has not been heard yet (the
-display's audio jack is not reachable in its case), so the value in
-`deploy/monitoni.service` is still marked as a placeholder.
+is the value in `deploy/monitoni.service`, heard on vm001 on 2026-10-27 (S5
+Play, all three sounds). The three sound files live in `assets/sounds/`
+(`success.wav`, `alarm.wav`, `error.wav`, 16-bit 44.1 kHz); if one is
+missing the daemon logs `audio unavailable, sounds are off` at start and
+every sound is off until the file is back and the daemon restarted.
 
 **The settings area.** Tap the small gear in the top right corner of the
 "Select a level" screen (or of the "Out of order" screen), type the PIN on the

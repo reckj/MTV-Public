@@ -19,8 +19,7 @@ ExecStart=/opt/monitoni/.venv/bin/python -m monitoni $MONITONI_OPTS
 Restart=always
 RestartSec=5
 # Sounds: pygame/SDL straight to ALSA (Raspberry Pi OS Lite has no PipeWire). AUDIODEV is the
-# ALSA name of the HDMI output as `aplay -L` lists it on the machine.
-# PLACEHOLDER, written ahead of the Pi: the real value is settled in Milestone 8 Part B.
+# ALSA name of the HDMI output as `aplay -L` lists it on the machine (vm001: heard 2026-10-27).
 Environment=SDL_AUDIODRIVER=alsa
 Environment=AUDIODEV=plughw:CARD=vc4hdmi0,DEV=0
 # a clean stop locks the doors, stops the motor and darkens the strip: give it a moment
