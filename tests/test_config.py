@@ -156,9 +156,10 @@ def test_milestone_5_feedback_sections_load():
     assert (wled.port, wled.universe, wled.fps, wled.health_poll_s, wled.enabled) == (
         6454, 0, 30, 30.0, True)
     assert audio.volume == 0.7 and audio.enabled and str(audio.dir) == "assets/sounds"
-    assert led.brightness == 0.6
+    assert led.brightness == 1.0 and led.dim == 0.3 and led.sleep == 0.15
     assert led.zones == [[12 * i, 12 * i + 11] for i in range(10)]
-    assert led.colours.idle == [60, 40, 20] and led.colours.alarm == [239, 90, 106]
+    assert led.colours.light == [255, 255, 255] and led.colours.go == [40, 200, 80]
+    assert led.colours.alarm == [239, 90, 106] and led.colours.fault == [120, 30, 30]
 
 
 ZONES = [[12 * i, 12 * i + 11] for i in range(10)]
@@ -182,7 +183,7 @@ def test_zone_rules_name_the_key(tmp_path, zones, message):
 
 @pytest.mark.parametrize("path,value", [
     ("led.brightness", 1.5),
-    ("led.colours.open", [255, 255]),
+    ("led.colours.go", [255, 255]),
     ("led.colours.alarm", [256, 0, 0]),
     ("hardware.wled.fps", 0),
     ("hardware.wled.health_poll_s", 0),

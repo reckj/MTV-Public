@@ -107,10 +107,11 @@ async def test_settings_show_idle_and_stay_silent(make_flow):
     assert flow.state is State.IDLE and led_calls(leds)[-1] == ("set_pattern", "idle", None)
 
 
-async def test_sleep_is_dark_and_silent(make_flow):
+async def test_sleep_is_dim_and_silent(make_flow):
     flow, leds, audio, _ = await make_flow(sleep_timeout_s=0.05)
     await wait_for(flow, State.SLEEP)
-    assert led_calls(leds)[-1] == ("set_pattern", "off", None) and audio.calls == []
+    assert led_calls(leds)[-1] == ("set_pattern", "sleep", None) and audio.calls == []
+    assert leds.frame[0] == leds.frame[119] == (38, 38, 38)  # white at led.sleep 0.15, every zone
     await flow.dispatch(Event.TOUCH)
     assert led_calls(leds)[-1] == ("set_pattern", "idle", None) and audio.calls == []
 

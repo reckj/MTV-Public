@@ -233,7 +233,7 @@ async def test_wrong_token_is_unreachable_and_unlocks_nothing(client, real_confi
 
 
 async def test_full_vend_lights_the_strip_through_the_fake_receiver(client, real_config, fakes):
-    from monitoni.leds import ArtnetLeds, scale
+    from monitoni.leds import ArtnetLeds
     from tests.fake_artnet import FakeArtnet, parse_zones
 
     core, levels = fakes
@@ -249,26 +249,24 @@ async def test_full_vend_lights_the_strip_through_the_fake_receiver(client, real
         real_config, health_url=f"http://127.0.0.1:{strip.port}/json/info"))
     await daemon.start()
     try:
-        idle, amber, cream, red = (scale(c, 0.6) for c in
-                                   ((60, 40, 20), (233, 162, 59), (239, 228, 210), (239, 90, 106)))
-        await wait_until(lambda: strip.zone_colours() == [idle] * 10, "idle on the strip")
+        light, go, dim, red = (255, 255, 255), (40, 200, 80), (76, 76, 76), (239, 90, 106)
+        await wait_until(lambda: strip.zone_colours() == [light] * 10, "idle on the strip")
         body = await status(client, daemon)
         assert body["leds"]["reachable"] is True and body["audio"]["available"] is True
 
         await to_door_unlocked(client, daemon, level=3)
-        await wait_until(lambda: strip.zone_colour(3) != amber and strip.zone_colour(3) != idle,
-                         "breathing")
-        breathing = set()
-        for _ in range(30):
-            breathing.add(strip.zone_colour(3))
+        await wait_until(lambda: strip.zone_colour(1) == dim, "the unlocked frame")
+        blinking = set()
+        for _ in range(30):  # 0.6 s, more than one 2 Hz period
+            blinking.add(strip.zone_colour(3))
             await asyncio.sleep(0.02)
-        assert len(breathing) > 5 and all(c[1:] != (0, 0) for c in breathing)  # amber, varying
-        assert strip.zone_colours()[:2] == [(0, 0, 0)] * 2  # the other zones are off
+        assert blinking == {go, (0, 0, 0)}  # green, hard on and off
+        assert strip.zone_colours()[:2] == [dim] * 2  # the other zones are the dim background
 
         core.inputs[0] = False  # door opened
         await wait_for_state(client, daemon, "door_opened")
-        await wait_until(lambda: strip.zone_colour(3) == cream, "open colour")
-        assert strip.zone_colours() == [(0, 0, 0)] * 2 + [cream] + [(0, 0, 0)] * 7
+        await wait_until(lambda: strip.zone_colour(3) == go, "open colour")
+        assert strip.zone_colours() == [dim] * 2 + [go] + [dim] * 7
 
         await wait_for_state(client, daemon, "door_alarm")
         flashing = set()
@@ -279,8 +277,8 @@ async def test_full_vend_lights_the_strip_through_the_fake_receiver(client, real
 
         core.inputs[0] = True
         await wait_for_state(client, daemon, "idle")
-        await wait_until(lambda: strip.zone_colours() == [idle] * 10, "back to idle", timeout=3)
-        selected_frames = [z for z in seen if z[2] == amber and z[0] == idle]
+        await wait_until(lambda: strip.zone_colours() == [light] * 10, "back to idle", timeout=3)
+        selected_frames = [z for z in seen if z[2] == go and z[0] == dim]  # before the unlock too
         assert selected_frames, "the selected pattern was shown for zone 3"
     finally:
         await daemon.stop()

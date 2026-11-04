@@ -96,12 +96,10 @@ class HardwareConfig(_Strict):
 
 
 class LedColoursConfig(_Strict):
-    idle: Rgb
-    selected: Rgb
-    unlocked: Rgb
-    open: Rgb
-    alarm: Rgb
-    fault: Rgb
+    light: Rgb  # idle, and the dim background
+    go: Rgb     # the customer's level: steady while selected, blinking while unlocked, steady open
+    alarm: Rgb  # all zones flashing: door alarm, door forced
+    fault: Rgb  # all zones steady: out of order
 
 
 class LedConfig(_Strict):
@@ -109,6 +107,8 @@ class LedConfig(_Strict):
     level, index = level - 1, checked against vending.levels and hardware.wled.pixel_count."""
 
     brightness: float = Field(ge=0, le=1)  # scales every frame
+    dim: float = Field(ge=0, le=1)  # the background factor: the zones not concerned
+    sleep: float = Field(ge=0, le=1)  # every zone while the machine sleeps
     zones: list[PixelRange]
     colours: LedColoursConfig
 

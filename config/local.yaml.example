@@ -30,6 +30,9 @@ hardware:
 # to the controller. Every machine's strip is different, so count them on this machine
 # (docs/SETUP.md §6). Ranges must not overlap and must stay inside pixel_count.
 led:
+  # brightness (1.0), dim (0.3, behind the customer's shelf), sleep (0.15) and the four colours
+  # (light, go, alarm, fault) have defaults in default.yaml; override one here only if the room
+  # asks for it.
   zones:
     - [0, 11]
     - [12, 23]

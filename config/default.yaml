@@ -45,9 +45,9 @@ hardware:
   motor:
     motor_channel: 1
     spindle_channel: 2
-    spindle_pre_delay_ms: 200
+    spindle_pre_delay_ms: 10      # 2026-11-04 (John): motor on as soon as the spindle is unlocked
     spin_after_release_ms: 500
-    spindle_post_delay_ms: 100
+    spindle_post_delay_ms: 10     # 2026-11-04 (John): lock the spindle as soon as the motor is off
     max_run_s: 10            # hard stop even if the button is never released
 
   # Gledopto ESP32 running WLED, driven over ArtNet (UDP). WLED must be set to receive ArtNet
@@ -68,11 +68,17 @@ hardware:
     enabled: true
     dir: "assets/sounds"       # relative paths are resolved from the repo root
 
-# What the LED strip shows. Patterns and the state → pattern mapping live in monitoni/leds.py
-# and feedback.py; only the zones (per machine, local.yaml), colours and brightness are config.
+# What the LED strip shows: product lighting first (white on every shelf), green for "go", red
+# only for alarms and faults. Patterns and the state → pattern mapping live in monitoni/leds.py
+# and feedback.py; only the zones (per machine, local.yaml), colours, factors and brightness are
+# config.
 led:
-  brightness: 0.6              # 0..1, scales every frame; the settings area will change it at
-                               # runtime via data/runtime.json
+  brightness: 1.0              # 0..1, scales every frame; the settings area changes it at
+                               # runtime via data/runtime.json. WLED's current limiter (set on
+                               # the controller to the strip's supply) is the ceiling above this.
+  dim: 0.3                     # the background factor: the zones that are not the customer's
+                               # while a purchase is under way
+  sleep: 0.15                  # the factor for every zone while the machine sleeps
   # One [first, last] pixel range per level (index = level - 1), counted from the controller end
   # starting at 0. The strip differs between machines: set this in local.yaml.
   zones:
@@ -86,13 +92,12 @@ led:
     - [84, 95]
     - [96, 107]
     - [108, 119]
-  colours:                     # [r, g, b]; the strip speaks the screen's language
-    idle: [60, 40, 20]         # dim warm, all zones
-    selected: [233, 162, 59]   # the UI amber: the selected level while its QR is shown
-    unlocked: [233, 162, 59]   # breathing on the paid level
-    open: [239, 228, 210]      # cream while the door is open
-    alarm: [239, 90, 106]      # flashing red, all zones
-    fault: [120, 30, 30]       # dim red, all zones, out of order
+  colours:                     # [r, g, b]
+    light: [255, 255, 255]     # white: idle, and (× dim, × sleep) the background
+    go: [40, 200, 80]          # green: the customer's level, steady while its QR is shown,
+                               # blinking while unlocked, steady again while the door is open
+    alarm: [239, 90, 106]      # red flashing on all zones: door alarm, door forced
+    fault: [120, 30, 30]       # dim red on all zones: out of order
 
 web:
   host: "127.0.0.1"

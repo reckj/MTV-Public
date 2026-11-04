@@ -3,15 +3,16 @@
 Not safety-relevant: every call into the LEDs or the audio is guarded, an exception is logged
 and swallowed, the flow never sees it. No retries. The mapping (notes/feedback.md):
 
-  entering                   LEDs                            audio
-  idle                       idle                            (a running loop stops)
-  sleep                      off
-  checking_purchase          selected, the selected level
-  door_unlocked              unlocked, the server's level    success once
-  door_opened                open, that level
-  door_alarm, door_forced    alarm, all zones                alarm, looped while in the state
-  completing                 thanks, that level (fades to idle)
-  out_of_order               fault                           error once, except for maintenance
+  entering                   LEDs                                  audio
+  idle                       idle: every zone white                (a running loop stops)
+  sleep                      sleep: every zone white at led.sleep
+  checking_purchase          selected: that level green, others dim
+  door_unlocked              unlocked: the server's level blinking success once
+                             green, others dim
+  door_opened                open: that level steady green
+  door_alarm, door_forced    alarm: all zones flashing red         alarm, looped while in the state
+  completing                 thanks: that level fades green to dim, then idle
+  out_of_order               fault: all zones dim red              error once, except maintenance
   settings                   idle (the LED tools there override it until the next transition)
 """
 
@@ -26,7 +27,7 @@ log = logging.getLogger(__name__)
 
 LED_PATTERNS: dict[State, str] = {
     State.IDLE: "idle",
-    State.SLEEP: "off",
+    State.SLEEP: "sleep",
     State.CHECKING_PURCHASE: "selected",
     State.DOOR_UNLOCKED: "unlocked",
     State.DOOR_OPENED: "open",

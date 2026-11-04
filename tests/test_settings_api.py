@@ -274,13 +274,12 @@ async def test_led_tools(client, daemon):
     assert daemon.leds.status()["pattern"] == "idle"
     code, body = await settings(client, daemon, "leds", action="fill", rgb=[255, 255, 255])
     assert code == 200 and body["leds"]["pattern"] == "fill"
-    assert set(daemon.leds.frame) == {(153, 153, 153)}  # 60 % brightness
+    assert set(daemon.leds.frame) == {(255, 255, 255)}  # brightness 1.0
     code, body = await settings(client, daemon, "leds", action="level", level=5)
     assert body["leds"]["pattern"] == "light_level" and body["leds"]["level"] == 5
-    open_colour = tuple(round(c * 0.6) for c in (239, 228, 210))
-    assert daemon.leds.frame[48] == open_colour and daemon.leds.frame[0] == (0, 0, 0)
+    assert daemon.leds.frame[48] == (40, 200, 80) and daemon.leds.frame[0] == (0, 0, 0)  # `go`
     code, body = await settings(client, daemon, "leds", action="level", level=2, rgb=[10, 0, 0])
-    assert daemon.leds.frame[12] == (6, 0, 0)
+    assert daemon.leds.frame[12] == (10, 0, 0)
     code, body = await settings(client, daemon, "leds", action="off")
     assert body["leds"]["pattern"] == "off"
     for bad in ({"action": "fill"}, {"action": "level"}, {"action": "disco"},
@@ -364,7 +363,7 @@ async def test_turn_held_across_the_timeout_stops_the_motor(client, make_daemon)
 
 async def test_status_additions(client, daemon):
     body = await status(client, daemon)
-    assert body["app_version"] == "0.7.1"
+    assert body["app_version"] == "0.8.0"
     assert isinstance(body["hostname"], str) and body["hostname"]
     assert body["ip"] is None or body["ip"].count(".") == 3
     assert body["purchase_server"]["base_url"] == "monitoni.zhdk.ch"

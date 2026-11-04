@@ -2,12 +2,10 @@
 
 import asyncio
 import logging
-import math
 
 import pytest
 
 from monitoni.leds import (
-    BREATH_FLOOR,
     OFF,
     PATTERNS,
     ArtnetLeds,
@@ -20,8 +18,9 @@ from monitoni.leds import (
 from tests.fake_artnet import FakeArtnet, parse_zones
 from tests.helpers import wait_until
 
-IDLE, SELECTED, UNLOCKED = (60, 40, 20), (233, 162, 59), (233, 162, 59)
-OPEN, ALARM, FAULT = (239, 228, 210), (239, 90, 106), (120, 30, 30)
+LIGHT, GO, ALARM, FAULT = (255, 255, 255), (40, 200, 80), (239, 90, 106), (120, 30, 30)
+DIM = scale(LIGHT, 0.3)  # the background behind the customer's level
+SLEEP = scale(LIGHT, 0.15)  # every zone while the machine sleeps
 ZONES = parse_zones("10x12")
 
 
@@ -42,20 +41,21 @@ def layout(make_config):
 
 @pytest.mark.parametrize("name,t,level,expected", [
     ("off", 0.0, None, [OFF] * 10),
-    ("idle", 0.0, None, [IDLE] * 10),
-    ("selected", 0.0, 3, [IDLE] * 2 + [SELECTED] + [IDLE] * 7),
-    ("unlocked", 0.0, 3, [OFF] * 2 + [UNLOCKED] + [OFF] * 7),
-    ("unlocked", 0.75, 3, [OFF] * 2 + [scale(UNLOCKED, BREATH_FLOOR)] + [OFF] * 7),
-    ("open", 0.0, 10, [OFF] * 9 + [OPEN]),
+    ("sleep", 0.0, None, [SLEEP] * 10),
+    ("idle", 0.0, None, [LIGHT] * 10),
+    ("selected", 0.0, 3, [DIM] * 2 + [GO] + [DIM] * 7),
+    ("unlocked", 0.0, 3, [DIM] * 2 + [GO] + [DIM] * 7),
+    ("unlocked", 0.25, 3, [DIM] * 2 + [OFF] + [DIM] * 7),
+    ("unlocked", 0.5, 3, [DIM] * 2 + [GO] + [DIM] * 7),
+    ("open", 0.0, 10, [DIM] * 9 + [GO]),
     ("alarm", 0.0, None, [ALARM] * 10),
     ("alarm", 0.25, None, [OFF] * 10),
     ("alarm", 0.5, None, [ALARM] * 10),
     ("fault", 0.0, None, [scale(FAULT, 0.5)] * 10),
-    ("thanks", 0.0, 4, [OFF] * 3 + [OPEN] + [OFF] * 6),
-    ("thanks", 0.5, 4,
-     [mix(OFF, IDLE, 0.5)] * 3 + [mix(OPEN, IDLE, 0.5)] + [mix(OFF, IDLE, 0.5)] * 6),
-    ("thanks", 1.0, 4, [IDLE] * 10),
-    ("thanks", 5.0, 4, [IDLE] * 10),
+    ("thanks", 0.0, 4, [DIM] * 3 + [GO] + [DIM] * 6),
+    ("thanks", 0.5, 4, [DIM] * 3 + [mix(GO, DIM, 0.5)] + [DIM] * 6),
+    ("thanks", 1.0, 4, [DIM] * 10),
+    ("thanks", 5.0, 4, [DIM] * 10),
 ], ids=lambda v: str(v) if not isinstance(v, list) else "")
 def test_pattern_renders_the_expected_zone_colours(layout, name, t, level, expected):
     frame = PATTERNS[name].render(layout, t, level)
@@ -66,17 +66,17 @@ def test_pattern_renders_the_expected_zone_colours(layout, name, t, level, expec
 
 
 def test_pattern_table_shape():
-    assert set(PATTERNS) == {"off", "idle", "selected", "unlocked", "open", "alarm", "fault",
-                             "thanks"}
+    assert set(PATTERNS) == {"off", "sleep", "idle", "selected", "unlocked", "open", "alarm",
+                             "fault", "thanks"}
     assert {n for n, p in PATTERNS.items() if p.animated} == {"unlocked", "alarm", "thanks"}
     assert PATTERNS["thanks"].ends_after_s == 1.0 and PATTERNS["thanks"].then == "idle"
 
 
-def test_breathing_is_smooth_and_never_dark(layout):
-    values = [PATTERNS["unlocked"].render(layout, t / 100, 1)[0] for t in range(150)]
-    assert values[0] == UNLOCKED and min(v[0] for v in values) == round(233 * BREATH_FLOOR)
-    assert values[150 - 1] != OFF and all(v != OFF for v in values)
-    assert math.isclose(values[75][0], 233 * BREATH_FLOOR, abs_tol=1.5)
+def test_unlocked_blinks_hard_at_two_hertz(layout):
+    values = [PATTERNS["unlocked"].render(layout, t / 100, 1)[0] for t in range(100)]
+    assert set(values) == {GO, OFF}  # on or off, nothing in between
+    assert [values[t] for t in (10, 30, 60, 80)] == [GO, OFF, GO, OFF]  # 250 ms phases
+    assert values.count(GO) == 50
 
 
 # -- the mock -----------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def test_breathing_is_smooth_and_never_dark(layout):
 def test_mock_records_calls_and_renders_frames(make_config):
     leds = MockLeds(make_config())
     assert leds.status() == {"enabled": True, "reachable": True, "since": None, "pattern": "off",
-                             "level": None, "brightness": 0.6}
+                             "level": None, "brightness": 1.0}
     leds.set_pattern("selected", 3)
     leds.fill((10, 20, 30))
     leds.light_level(2, (1, 2, 3))
@@ -94,15 +94,14 @@ def test_mock_records_calls_and_renders_frames(make_config):
         ("set_pattern", "off", None)]
     assert all(isinstance(c[0], float) for c in leds.calls)
     selected, fill, light, off = leds.frames
-    dim_idle, amber = scale(IDLE, 0.6), scale(SELECTED, 0.6)
-    assert zone_colours(selected)[0] == [dim_idle] * 2 + [amber] + [dim_idle] * 7
-    assert set(fill) == {(6, 12, 18)}
-    assert zone_colours(light)[0] == [OFF, (1, 1, 2)] + [OFF] * 8
+    assert zone_colours(selected)[0] == [DIM] * 2 + [GO] + [DIM] * 7
+    assert set(fill) == {(10, 20, 30)}
+    assert zone_colours(light)[0] == [OFF, (1, 2, 3)] + [OFF] * 8
     assert set(off) == {OFF} and leds.frame is off
     with pytest.raises(ValueError, match="unknown LED pattern 'disco'"):
         leds.set_pattern("disco")
-    leds.set_brightness(1.0)
-    assert leds.status()["brightness"] == 1.0 and set(leds.frame) == {OFF}
+    leds.set_brightness(0.5)
+    assert leds.status()["brightness"] == 0.5 and set(leds.frame) == {OFF}
 
 
 # -- the ArtNet sender against the fake -----------------------------------------------------
@@ -141,7 +140,7 @@ async def test_steady_pattern_is_sent_once_and_animated_ones_at_fps(make_leds, f
     leds.set_pattern("idle")
     await asyncio.sleep(0.3)
     assert fake_artnet.frames_received == 2  # one frame on change, no keepalive yet (1 s)
-    assert fake_artnet.zone_colours() == [scale(IDLE, 0.6)] * 10
+    assert fake_artnet.zone_colours() == [LIGHT] * 10
     before = fake_artnet.frames_received
     leds.set_pattern("alarm")
     await asyncio.sleep(0.3)
@@ -151,7 +150,7 @@ async def test_steady_pattern_is_sent_once_and_animated_ones_at_fps(make_leds, f
     for _ in range(20):
         seen.add(fake_artnet.zone_colour(1))
         await asyncio.sleep(0.03)
-    assert seen == {scale(ALARM, 0.6), OFF}  # it flashes
+    assert seen == {ALARM, OFF}  # it flashes
     leds.set_pattern("off")
     await asyncio.sleep(0.1)
     before = fake_artnet.frames_received
@@ -165,7 +164,7 @@ async def test_keepalive_resends_a_steady_frame(make_leds, fake_artnet, monkeypa
     leds.set_pattern("fault")
     await asyncio.sleep(0.3)
     assert fake_artnet.frames_received >= 4
-    assert fake_artnet.zone_colours() == [scale(scale(FAULT, 0.5), 0.6)] * 10
+    assert fake_artnet.zone_colours() == [scale(FAULT, 0.5)] * 10
 
 
 async def test_thanks_fades_to_idle_and_an_idle_request_lets_it_finish(make_leds, fake_artnet):
@@ -175,10 +174,10 @@ async def test_thanks_fades_to_idle_and_an_idle_request_lets_it_finish(make_leds
     assert leds.status()["pattern"] == "thanks" and leds.status()["level"] == 3
     await asyncio.sleep(0.1)
     mid = fake_artnet.zone_colour(3)
-    assert mid != scale(OPEN, 0.6) and mid != scale(IDLE, 0.6)
+    assert mid not in (GO, DIM, LIGHT) and fake_artnet.zone_colour(1) == DIM  # fading, others dim
     await wait_until(lambda: leds.status()["pattern"] == "idle", "the fade to end", timeout=2.0)
     assert leds.status()["level"] is None
-    await wait_until(lambda: fake_artnet.zone_colours() == [scale(IDLE, 0.6)] * 10, "idle frame")
+    await wait_until(lambda: fake_artnet.zone_colours() == [LIGHT] * 10, "idle frame")
     leds.set_pattern("thanks", 3)
     leds.set_pattern("selected", 2)  # anything else replaces the fade at once
     assert leds.status()["pattern"] == "selected"
@@ -202,11 +201,12 @@ async def test_universe_split_at_170_pixels(make_leds, fake_artnet, pixel_count,
 async def test_brightness_scales_every_frame(make_leds, fake_artnet):
     leds = await make_leds()
     leds.set_pattern("selected", 1)
-    await wait_until(lambda: fake_artnet.zone_colour(1) == scale(SELECTED, 0.6), "60 %")
-    assert fake_artnet.zone_colour(1) == (140, 97, 35)
+    await wait_until(lambda: fake_artnet.zone_colour(1) == GO, "100 %")
+    assert fake_artnet.zone_colour(2) == DIM
     leds.set_brightness(0.25)  # a steady pattern is resent at once
-    await wait_until(lambda: fake_artnet.zone_colour(1) == scale(SELECTED, 0.25), "25 %")
-    assert fake_artnet.zone_colour(2) == scale(IDLE, 0.25)
+    await wait_until(lambda: fake_artnet.zone_colour(1) == scale(GO, 0.25), "25 %")
+    assert fake_artnet.zone_colour(1) == (10, 50, 20)
+    assert fake_artnet.zone_colour(2) == scale(DIM, 0.25)
     leds.set_brightness(7)
     assert leds.status()["brightness"] == 1.0
 
@@ -220,7 +220,7 @@ async def test_runtime_json_overrides_the_configured_brightness(make_config, tmp
     leds = MockLeds(config)
     assert leds.status()["brightness"] == 0.1
     leds.set_pattern("idle")
-    assert set(zone_colours(leds.frame)[0]) == {scale(IDLE, 0.1)}
+    assert set(zone_colours(leds.frame)[0]) == {scale(LIGHT, 0.1)}
 
 
 async def test_health_poll_reports_reachability_changes(make_leds, fake_artnet):
@@ -323,7 +323,7 @@ async def test_send_failures_are_logged_once_each_way(make_leds, fake_artnet, mo
 async def test_a_clean_stop_sends_one_dark_frame(make_leds, fake_artnet):
     leds = await make_leds()
     leds.set_pattern("idle")
-    await wait_until(lambda: fake_artnet.zone_colours() == [scale(IDLE, 0.6)] * 10, "idle")
+    await wait_until(lambda: fake_artnet.zone_colours() == [LIGHT] * 10, "idle")
     sent = fake_artnet.frames_received
     await leds.stop()
     await wait_until(lambda: fake_artnet.frames_received == sent + 1, "the dark frame")

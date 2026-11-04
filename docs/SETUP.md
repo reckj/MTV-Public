@@ -51,7 +51,13 @@ Facts so far (no hardware has been set up on a Pi yet):
   4. **Power.** The output V+ terminals carry the input voltage unregulated.
      vm001 runs controller and strip from the Type-C port (5 V, 3 A wall
      adapter, not a PC port): keep the current limiter (LED Preferences,
-     "Maximum PSU current") well below 3 A, 2000 mA at most. A 24 V terminal
+     "Maximum PSU current") well below 3 A, **2000 mA**, no more. Tried on
+     2026-11-04: at 2500 mA the idle frame (all 72 pixels white) drew 2.4 A
+     and the controller's Ethernet link dropped every few seconds while the
+     ESP32 itself kept running (`/json/info` uptime never reset); back at
+     2000 mA (1.9 A at idle) it is stable. Full white on all shelves wants a
+     5 V / 5 A supply and 4500 mA; until then the limiter dims the frame,
+     which is what it is for. A 24 V terminal
      supply would destroy a 5 V strip; then the strip needs its own 5 V
      supply with a common GND and the controller's V+ output stays
      unconnected.
@@ -546,9 +552,18 @@ with `-rw-------`. Every key that is not in the file keeps its value from
   level. The ranges must not overlap and must stay below `pixel_count`; the
   daemon refuses to start otherwise and names the bad entry (`led.zones.3`
   is the fourth level). The default is ten blocks of twelve pixels.
-- `led.brightness` (0..1, default 0.6) and `hardware.audio.volume` (0..1,
+- `led.brightness` (0..1, default 1.0) and `hardware.audio.volume` (0..1,
   default 0.7). Both are changed on the machine in the settings area and then
-  stored in `data/runtime.json`, which wins over the YAML.
+  stored in `data/runtime.json`, which wins over the YAML. The strip is
+  product lighting: every shelf white while the machine is awake, white at
+  `led.sleep` (default 0.15) while it sleeps and at `led.dim` (default 0.3)
+  behind the shelves that are not the customer's, green on the customer's
+  shelf (steady while its QR code is shown, blinking while it is unlocked,
+  steady again while its door is open), red only for the door alarm and out
+  of order. The
+  four colours are `led.colours` (`light`, `go`, `alarm`, `fault`) in
+  `default.yaml`; the controller's current limiter (§1 item 4) caps whatever
+  brightness asks for.
 - `hardware.wled.enabled` / `hardware.audio.enabled` — set to `false` on a
   machine without a strip or without a speaker; the daemon then uses the
   built-in stand-ins and shows the patterns only in the status.

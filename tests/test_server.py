@@ -73,7 +73,7 @@ async def test_status_endpoint(client, daemon):
     assert body["qr_url"] is None and body["selected_level"] is None
     assert body["countdown_s"] is not None  # idle has a sleep timeout
     assert body["leds"] == {"enabled": True, "reachable": True, "since": None, "pattern": "idle",
-                            "level": None, "brightness": 0.6}
+                            "level": None, "brightness": 1.0}
     assert body["audio"] == {"enabled": True, "available": True, "since": None, "volume": 0.7,
                              "playing": None}
 

@@ -1,8 +1,11 @@
 """LED feedback on the WLED strip over ArtNet. Not safety-relevant: nothing here reaches the flow.
 
 Patterns are a table: name -> how to render a frame at time t for a level. A frame is one RGB
-triple per pixel, before `led.brightness` is applied. The zones (one pixel range per level) and
-the colours come from the config; the mapping state -> pattern lives in feedback.py.
+triple per pixel, before `led.brightness` is applied. The zones (one pixel range per level), the
+colours and the dim factor come from the config; the mapping state -> pattern lives in
+feedback.py. The strip is product lighting first: every zone white (`light`) in idle, white at
+`led.dim` behind the customer's level and at `led.sleep` while the machine sleeps, green (`go`)
+on the customer's level, red (`alarm`, `fault`) only when something is wrong.
 
 ArtnetLeds builds the ArtDMX packets itself (`artdmx_packet`) and sends them from one UDP
 socket, 170 pixels per universe starting at hardware.wled.universe. It renders at `fps` only
@@ -38,10 +41,8 @@ PIXELS_PER_UNIVERSE = 170  # 510 of the 512 DMX channels
 OPCODE_DMX = 0x5000
 PROTOCOL_VERSION = 14
 KEEPALIVE_S = 1.0  # resend a steady frame this often (WLED's realtime timeout is 2.5 s)
-BREATH_PERIOD_S = 1.5
-BREATH_FLOOR = 0.2  # the breathing zone never goes darker than this fraction of its colour
-FLASH_HZ = 2.0
-THANKS_S = 1.0  # the fade from `open` to `idle`
+FLASH_HZ = 2.0  # `unlocked` blinks and `alarm` flashes at this rate, hard on/off
+THANKS_S = 1.0  # the fade of the paid level from `go` to the dim background, then `idle`
 
 
 def artdmx_packet(universe: int, sequence: int, data: bytes) -> bytes:
@@ -77,6 +78,8 @@ class Layout:
         self.zones: list[tuple[int, int]] = [(a, b) for a, b in config.led.zones]  # index = level-1
         self.colours: dict[str, Rgb] = {name: tuple(rgb) for name, rgb
                                         in config.led.colours.model_dump().items()}
+        self.background: Rgb = scale(self.colours["light"], config.led.dim)
+        self.asleep: Rgb = scale(self.colours["light"], config.led.sleep)
 
     def paint(self, others: Rgb, level: int | None = None, colour: Rgb = OFF) -> Frame:
         """Every zone in `others`, the zone of `level` in `colour`; pixels outside the zones off."""
@@ -101,27 +104,32 @@ def _off(lay: Layout, t: float, level: int | None) -> Frame:
     return lay.off()
 
 
+def _blink(t: float) -> bool:
+    return (t * FLASH_HZ) % 1.0 < 0.5
+
+
+def _sleep(lay: Layout, t: float, level: int | None) -> Frame:
+    return lay.paint(lay.asleep)
+
+
 def _idle(lay: Layout, t: float, level: int | None) -> Frame:
-    return lay.paint(lay.colours["idle"])
+    return lay.paint(lay.colours["light"])
 
 
 def _selected(lay: Layout, t: float, level: int | None) -> Frame:
-    return lay.paint(lay.colours["idle"], level, lay.colours["selected"])
+    return lay.paint(lay.background, level, lay.colours["go"])
 
 
 def _unlocked(lay: Layout, t: float, level: int | None) -> Frame:
-    wave = 0.5 + 0.5 * math.cos(2 * math.pi * t / BREATH_PERIOD_S)  # 1 at t=0, 0 at half period
-    factor = BREATH_FLOOR + (1 - BREATH_FLOOR) * wave
-    return lay.paint(OFF, level, scale(lay.colours["unlocked"], factor))
+    return lay.paint(lay.background, level, lay.colours["go"] if _blink(t) else OFF)
 
 
 def _open(lay: Layout, t: float, level: int | None) -> Frame:
-    return lay.paint(OFF, level, lay.colours["open"])
+    return lay.paint(lay.background, level, lay.colours["go"])
 
 
 def _alarm(lay: Layout, t: float, level: int | None) -> Frame:
-    on = (t * FLASH_HZ) % 1.0 < 0.5
-    return lay.paint(lay.colours["alarm"] if on else OFF)
+    return lay.paint(lay.colours["alarm"] if _blink(t) else OFF)
 
 
 def _fault(lay: Layout, t: float, level: int | None) -> Frame:
@@ -130,7 +138,8 @@ def _fault(lay: Layout, t: float, level: int | None) -> Frame:
 
 def _thanks(lay: Layout, t: float, level: int | None) -> Frame:
     k = min(t / THANKS_S, 1.0)
-    return [mix(a, b, k) for a, b in zip(_open(lay, t, level), _idle(lay, t, level), strict=True)]
+    return [mix(a, b, k) for a, b in zip(_open(lay, t, level), lay.paint(lay.background),
+                                         strict=True)]
 
 
 @dataclass(frozen=True)
@@ -143,6 +152,7 @@ class Pattern:
 
 PATTERNS: dict[str, Pattern] = {
     "off": Pattern(_off),
+    "sleep": Pattern(_sleep),
     "idle": Pattern(_idle),
     "selected": Pattern(_selected),
     "unlocked": Pattern(_unlocked, animated=True),

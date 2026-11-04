@@ -132,7 +132,7 @@ async def leds(daemon: "Daemon", body: dict) -> None:
             raise ValueError("fill needs rgb")
         daemon.leds.fill(rgb)
     elif action == "level":
-        rgb = _rgb(body) or tuple(daemon.config.led.colours.open)
+        rgb = _rgb(body) or tuple(daemon.config.led.colours.go)
         daemon.leds.light_level(_level(daemon, body), rgb)
     else:
         raise ValueError("action must be off, fill or level")

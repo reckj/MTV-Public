@@ -9,9 +9,9 @@ from monitoni.runtime import Runtime
 def test_missing_file_means_the_config_values(make_config, tmp_path):
     config = make_config()
     runtime = Runtime.load(tmp_path / "runtime.json", config)
-    assert (runtime.out_of_order, runtime.brightness, runtime.volume) == (False, 0.6, 0.7)
+    assert (runtime.out_of_order, runtime.brightness, runtime.volume) == (False, 1.0, 0.7)
     runtime.apply(config)
-    assert config.led.brightness == 0.6 and config.hardware.audio.volume == 0.7
+    assert config.led.brightness == 1.0 and config.hardware.audio.volume == 0.7
 
 
 def test_file_values_win_and_bad_ones_are_ignored(make_config, tmp_path, caplog):
