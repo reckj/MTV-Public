@@ -479,8 +479,10 @@ session only gets them after logging out and in again.
 URL, settings PIN.
 
 _Performed on vm001 on 2026-10-14 (commissioning: mock hardware, the test
-server, the token) and on 2026-10-23 (the modules' static addresses, real
-mode, the test server's QR URLs; values at the end of this section)._
+server, the token), on 2026-10-23 (the modules' static addresses, real
+mode, the test server's QR URLs) and on 2026-11-04 (go-live: the production
+server, its ten QR URLs, the machine's name and location, the production
+token and the PIN; values at the end of this section)._
 
 Create the file from the example and make it readable for `monitoni` only
 (it will hold the machine's token):
@@ -530,12 +532,15 @@ with `-rw-------`. Every key that is not in the file keeps its value from
 - `qr.base_url` — the QR code for level N encodes `<qr.base_url>?level=<N>`,
   the same pattern as the old machines (no machine id). The codes are drawn
   from this value on demand; change it, restart, done.
-- `qr.urls` — interim, for a server that issues one URL per level instead
-  (the test server does: `https://test.monitoni.zhdk.ch/qr/<code>`). Map the
-  level to its URL, one line per level, as in `local.yaml.example`; a level
-  without a line keeps the `?level=<N>` pattern. The settings area, QR codes
-  screen, shows what each level encodes. The key goes away once the server
-  offers the URLs for the machine to fetch.
+- `qr.urls` — for a server that issues one URL per level instead, which
+  the Monitoni servers do: `https://monitoni.zhdk.ch/qr/<code>`, one code
+  per level and machine, handed over by Monitoni (Lukas) when the machine is
+  registered; the test server has its own set. Map the level to its URL, one
+  line per level, all ten, as in `local.yaml.example`; a level without a
+  line keeps the `?level=<N>` pattern. The settings area, QR codes screen,
+  shows what each level encodes; check level 1 and level 10 there after the
+  restart. The key goes away once the server offers the URLs for the machine
+  to fetch.
 - `settings.pin` — the PIN for the settings area on the touchscreen, 4 to 8
   digits, written as a string in quotes (`pin: "4711"`). The default is
   `"0000"`; every start with the default logs the line `settings.pin is still
@@ -614,10 +619,14 @@ sudo systemctl restart monitoni
 On the development laptop neither file is needed; mock mode runs on the
 defaults.
 
-**vm001 as set on 2026-10-23** (`local.yaml`, apart from the token and the
-unchanged defaults):
+**vm001 as set on 2026-10-23 and 2026-11-04** (`local.yaml`, apart from the
+token, the PIN and the unchanged defaults):
 
 ```
+system:
+  name: "Thor"                  # the wordmark, as the machine is labelled (2026-11-04)
+  location: "kunstoff-2.e06"    # the room, the small line under it
+  machine_id: "VM001"
 hardware:
   mode: real
   relay_core:
@@ -640,20 +649,32 @@ led:
     - [7, 13]
     - [0, 6]                    # level 10 (bottom, controller end)
 purchase_server:
-  base_url: "https://test.monitoni.zhdk.ch"   # commissioning only
-  token: "…"                                  # the machine's token, never shared
+  base_url: "https://monitoni.zhdk.ch"        # production since 2026-11-04; the test
+                                              # server until then
+  token: "…"                                  # the production token, the installer's, never shared
 qr:
-  urls:
-    1: "https://test.monitoni.zhdk.ch/qr/OSVcQJH7"
-    2: "https://test.monitoni.zhdk.ch/qr/UNvHkk7B"
+  urls:                                       # Monitoni's codes for this machine ("Thor")
+    1: "https://monitoni.zhdk.ch/qr/NUvcoyWb"
+    2: "https://monitoni.zhdk.ch/qr/koO2uTZL"
+    3: "https://monitoni.zhdk.ch/qr/u90HqaUg"
+    4: "https://monitoni.zhdk.ch/qr/544foe5w"
+    5: "https://monitoni.zhdk.ch/qr/nI5N6mCr"
+    6: "https://monitoni.zhdk.ch/qr/aIy9xt8T"
+    7: "https://monitoni.zhdk.ch/qr/r7iowuuj"
+    8: "https://monitoni.zhdk.ch/qr/ZtXeu0d4"
+    9: "https://monitoni.zhdk.ch/qr/Ctb0Rrxp"
+    10: "https://monitoni.zhdk.ch/qr/4p1E7581"
+settings:
+  pin: "…"                                    # the installer's, set 2026-11-04
 ```
 
-`/etc/default/monitoni` has `MONITONI_OPTS=""` since the same day. Still at
-their defaults and **not yet confirmed against the wiring**:
-`hardware.door_locks.channels` (the first test on 2026-10-23 switched relay
-channel 1 but the shelf-1 lock did not release, §10), `door_sensor`,
-`motor`. `led.zones` confirmed on the machine 2026-11-03 (shelves 1, 5, 10
-checked in S4). `settings.pin` is still `0000`.
+`/etc/default/monitoni` has `MONITONI_OPTS=""` since 2026-10-23.
+`hardware.door_locks.channels`, `door_sensor` and `motor` are at their
+defaults and are the wired state: the installer rewired the lock side after
+the first test (2026-10-23, §10), and every purchase since has unlocked the
+selected shelf. `led.zones` confirmed on the machine 2026-11-03 (shelves 1,
+5, 10 checked in S4). The token and the PIN were typed on the machine by the
+installer; neither is in any repository or note.
 
 ## 7. First start
 
@@ -863,9 +884,54 @@ _Real hardware start on a Pi: to be written during integration._
 
 ## 8. Verification
 
-Per-component tests from the settings area, and the first vend.
+Per-component tests from the settings area, then the first vend. _Performed
+on vm001 between 2026-10-23 and 2026-11-04; the go-live checks on
+2026-11-04._
 
-_To be written during integration._
+**Per component**, in the settings area (gear, PIN):
+
+1. **S1 Status:** Doors, Core, Sensor, LEDs, Audio green; "Purchase server"
+   reachable. After a power-up of the whole rack this can take several
+   minutes (the PoE switch and the modules boot slower than the Pi; vm001:
+   8 and 13 minutes on two occasions), the daemon reconnects on its own.
+2. **S2 Door:** reads CLOSED; open a door by hand (with its lock released
+   from S2) and it reads OPEN. Unlock a shelf: the relay clicks and the door
+   releases; lock it again.
+3. **S3 Motor:** Spindle open/close; hold TURN, the carousel turns, release,
+   it stops. Hold TURN for more than `max_run_s` (10 s): the daemon stops the
+   motor by itself, the event log shows stop reason `watchdog`, the journal
+   "motor running for 10.0s without a release, stopping". The spindle lock
+   closes right after the motor stops (`spindle_post_delay_ms` 10).
+4. **S4 LEDs:** White lights every shelf, Level N lights shelf N and nothing
+   else, Off darkens the strip. If White comes out coloured the strip's
+   colour order in WLED is wrong (§1); if nothing lights, §10.
+5. **S5 Sounds:** Play success, alarm, error; all three heard over the
+   display's speakers.
+6. **S6 Server:** "Test server" answers OK within a second. Against
+   `monitoni.zhdk.ch` on 2026-11-04: ok in 81 ms.
+7. **S7 QR codes:** level 1 and level 10 show the production URLs.
+8. **S8 Log:** the entries above are there, "Queued" is 0.
+
+**The first vend** (Out of order off, a real product, real money):
+
+1. Tap the shelf: it lights green, the QR code shows with the countdown.
+2. Scan with the phone, pay in the app: within a second the screen changes
+   to "Door unlocked", the shelf blinks green, the door releases.
+3. Open the door (steady green), take the product, close it: the thank-you
+   fade, then the shelves are white again.
+4. S8 shows the vend: `complete` delivered after the door opened, `close`
+   delivered after it closed, both after 1 attempt, Queued 0. On the
+   Monitoni side the purchase shows as completed.
+
+vm001, 2026-11-04 16:33–16:35, John buying: three purchases (shelves 5, 2,
+8), each permitted → door opened 2–4 s later → relocked → closed → idle,
+all six reports delivered on the first attempt, outbox 0. Two things seen
+on the way, both correct: a door left open past 10 s raises the door alarm
+(red, sound) and the close is still reported when it is shut; a purchase
+whose door is not opened within 30 s returns the machine to idle, the
+purchase stays permitted on the server, and the next tap on that shelf
+opens the door without a new payment (shelf 8: 16:34:13 timed out,
+16:35:01 opened at once).
 
 ## 9. Run as a service
 
