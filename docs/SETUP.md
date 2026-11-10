@@ -22,7 +22,9 @@ Facts so far (no hardware has been set up on a Pi yet):
   network, then:
   1. **Config → LED Preferences**: set the LED count ("Length") to at least
      the number of pixels on the strip (`hardware.wled.pixel_count`), the
-     LED type and colour order of the strip (vm001: WS2812 RGB, GRB), and
+     LED type and colour order of the strip (vm001: WS2812 RGB, GRB; the
+     strip since 2026-11-10 is a 5 V ultra-narrow WS2812B, 160 LEDs/m,
+     120 cm, 192 pixels, Length 192), and
      **Relay GPIO 18 with Invert ticked**. On the GL-C-616WL the relay
      switches the V+ of the output terminals; without it the strip has no
      power and stays dark whatever the data pin sends. Leave "Turn LEDs on
@@ -57,13 +59,24 @@ Facts so far (no hardware has been set up on a Pi yet):
      ESP32 itself kept running (`/json/info` uptime never reset); back at
      2000 mA (1.9 A at idle) it is stable. Full white on all shelves wants a
      5 V / 5 A supply and 4500 mA; until then the limiter dims the frame,
-     which is what it is for. A 24 V terminal
+     which is what it is for. Next to the limiter, **"LED current"**
+     (`ledma`, "mA per LED") is what WLED multiplies by the pixel count to
+     estimate the draw; the default 55 mA is a 5050 figure. Set it to the
+     strip's own figure from its listing: watts per metre divided by LEDs
+     per metre, divided by 5 V. vm001's 192-pixel strip is listed at 12 W/m
+     over 160 LEDs/m, so 15 mA (set 2026-11-10). Left at 55 the controller
+     would count 192 pixels as 10.5 A and dim full white to under a fifth.
+     Never set it lower than the listing says. With 15 mA and the 2000 mA
+     limiter, full white on 192 pixels is estimated at 1808 mA and the
+     controller stayed on its Ethernet through a minute of it. A 24 V terminal
      supply would destroy a 5 V strip; then the strip needs its own 5 V
      supply with a common GND and the controller's V+ output stays
      unconnected.
   "Multi RGB" means three DMX channels per pixel, red, green, blue; a strip of
   more than 170 pixels continues in the next universe, which WLED handles by
-  itself. "Force max brightness" makes the daemon's `led.brightness` the only
+  itself: nothing extra is set on the controller. Confirmed on vm001 on
+  2026-11-10 with 192 pixels (the daemon's journal line reads `universes
+  0-1, 192 pixels`, and the last 22 pixels light like the rest). "Force max brightness" makes the daemon's `led.brightness` the only
   brightness in play.
 
 _The rest of the list: to be written during integration._
@@ -484,7 +497,8 @@ _Performed on vm001 on 2026-10-14 (commissioning: mock hardware, the test
 server, the token), on 2026-10-23 (the modules' static addresses, real
 mode, the test server's QR URLs) and on 2026-11-04 (go-live: the production
 server, its ten QR URLs, the machine's name and location, the production
-token and the PIN; values at the end of this section)._
+token and the PIN) and on 2026-11-10 (the 192-pixel strip: `pixel_count`
+and the zones walked again; values at the end of this section)._
 
 Create the file from the example and make it readable for `monitoni` only
 (it will hold the machine's token):
@@ -621,8 +635,8 @@ sudo systemctl restart monitoni
 On the development laptop neither file is needed; mock mode runs on the
 defaults.
 
-**vm001 as set on 2026-10-23 and 2026-11-04** (`local.yaml`, apart from the
-token, the PIN and the unchanged defaults):
+**vm001 as set on 2026-10-23, 2026-11-04 and 2026-11-10** (`local.yaml`,
+apart from the token, the PIN and the unchanged defaults):
 
 ```
 system:
@@ -637,19 +651,23 @@ hardware:
     host: "10.21.63.220"        # Waveshare 30-ch, MAC 04:EE:E8:1E:02:B6
   wled:
     ip_address: "10.21.63.219"  # Gledopto WLED, Ethernet MAC 20:E7:C8:6A:E3:7F
-    pixel_count: 72             # M5Stack SK6812 5 V, 120/m, 72 pixels (2026-11-03)
+    pixel_count: 192            # WS2812B 5 V ultra-narrow, 160/m, 120 cm, 192 pixels
+                                # (2026-11-10; before that M5Stack SK6812, 72 pixels)
 led:
-  zones:                        # pixel 0 at the bottom level (10), level 1 at the far end
-    - [65, 71]                  # level 1 (top)
-    - [58, 64]
-    - [50, 57]
-    - [43, 49]
-    - [36, 42]
-    - [29, 35]
-    - [22, 28]
-    - [14, 21]
-    - [7, 13]
-    - [0, 6]                    # level 10 (bottom, controller end)
+  zones:                        # pixel 0 at the bottom level (10), level 1 at the top;
+                                # walked shelf by shelf 2026-11-10: pixels 0-2 are below
+                                # shelf 10, level 10 gets 16 pixels, the others 19,
+                                # level 1 runs to the end of the strip
+    - [171, 191]                # level 1 (top)
+    - [152, 170]
+    - [133, 151]
+    - [114, 132]
+    - [95, 113]
+    - [76, 94]
+    - [57, 75]
+    - [38, 56]
+    - [19, 37]
+    - [3, 18]                   # level 10 (bottom, controller end)
 purchase_server:
   base_url: "https://monitoni.zhdk.ch"        # production since 2026-11-04; the test
                                               # server until then
@@ -674,8 +692,10 @@ settings:
 `hardware.door_locks.channels`, `door_sensor` and `motor` are at their
 defaults and are the wired state: the installer rewired the lock side after
 the first test (2026-10-23, §10), and every purchase since has unlocked the
-selected shelf. `led.zones` confirmed on the machine 2026-11-03 (shelves 1,
-5, 10 checked in S4). The token and the PIN were typed on the machine by the
+selected shelf. `led.zones` walked with every level in its own colour on
+2026-11-10 (the 72-pixel table of 2026-11-03 went with the old strip) and
+checked in S4: White lights all 192 pixels, Level 1, 5 and 10 light their
+shelf and nothing else. The token and the PIN were typed on the machine by the
 installer; neither is in any repository or note.
 
 ## 7. First start
