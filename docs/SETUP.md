@@ -1066,6 +1066,63 @@ sudo systemctl stop monitoni-kiosk monitoni
 `stop monitoni` stops the motor and darkens the LED strip on the way out;
 `sudo systemctl start monitoni monitoni-kiosk` brings both back.
 
+**Updating the application on a machine in service.** _Performed on vm001
+on 2026-11-10 (0.8.0 → 0.8.1, through Raspberry Pi Connect, customers
+possible at any moment)._ The machine needs internet for this; there is no
+offline update path yet (the installation is a git clone, `wheels.sh` only
+covers the Python packages of §5, not a new version of the application).
+
+1. Note the version that runs, for the way back:
+
+   ```
+   cd /opt/monitoni
+   git log -1 --oneline
+   ```
+
+   `app_version` in `curl -s 127.0.0.1:8080/api/status` (S1 shows it in its
+   footer) is the version running right now.
+2. Fetch the new version:
+
+   ```
+   git pull
+   ```
+
+   Files under `monitoni/web/static/` (the page) are served at once; the
+   daemon itself keeps running the old code until it is restarted, so do the
+   next step soon after. `git pull` prints the files it changed: look for
+   `deploy/` and `config/default.yaml`.
+3. Wait until the machine is free: `/api/status` reads `"state": "idle"` or
+   `"sleep"`, nothing selected, every door `locked`, `outbox_pending` 0.
+   Then:
+
+   ```
+   sudo systemctl restart monitoni
+   ```
+
+   A customer at the display sees "Out of order" for a few seconds, then the
+   shelves again. The daemon writes the known state on the way up (all doors
+   locked, motor off, spindle closed) and loads the sounds. Check
+   `app_version` in `/api/status` and `journalctl -u monitoni -n 30`: no
+   error, no `audio unavailable`, and no `invalid configuration:` — that one
+   means `config/local.yaml` holds a key the new version no longer knows;
+   remove the line and restart again.
+4. Only when the pull changed something under `deploy/` (a unit file, the
+   rules file, `kiosk.sh`, the journald drop-in):
+
+   ```
+   sudo /opt/monitoni/deploy/install.sh
+   sudo systemctl restart monitoni-kiosk
+   ```
+
+   `install.sh` says what it copied and starts nothing; the kiosk restart
+   turns the display black for about two seconds, the daemon is not touched.
+   Do it in idle or sleep as well.
+
+The way back, if the new version misbehaves: `git checkout <commit>` with
+the commit noted in step 1, then the same restart(s); `git checkout main`
+returns to the newest version later. A change to `config/default.yaml`
+needs no step of its own: it is part of the pull.
+
 ## 10. Troubleshooting
 
 Common problems and how to check them. Started 2026-10-23; grows with every
