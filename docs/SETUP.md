@@ -910,7 +910,7 @@ on vm001 between 2026-10-23 and 2026-11-04; the go-live checks on
    goes off first and the lock closes right after it. On a release the order
    is the other way round (since 2026-11-10): the spindle lock closes the
    moment TURN is released and the motor runs on for `spin_after_release_ms`
-   (400 ms) into the closed lock, then stops. The `stop` row in S8 for a
+   (700 ms) into the closed lock, then stops. The `stop` row in S8 for a
    release carries `run_on_ms`, the run-on the daemon measured; a hard stop
    has no run-on and no such field.
 4. **S4 LEDs:** White lights every shelf, Level N lights shelf N and nothing

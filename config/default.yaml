@@ -46,7 +46,7 @@ hardware:
     motor_channel: 1
     spindle_channel: 2
     spindle_pre_delay_ms: 10      # 2026-11-04 (John): motor on as soon as the spindle is unlocked
-    spin_after_release_ms: 400    # 2026-11-10 (John): the lock goes in at release, the motor runs on this long
+    spin_after_release_ms: 700    # 2026-11-10 (John): the lock goes in at release, the motor runs on this long; 400 until the same afternoon, 700 after testing at the machine
     max_run_s: 10            # hard stop even if the button is never released
 
   # Gledopto ESP32 running WLED, driven over ArtNet (UDP). WLED must be set to receive ArtNet
