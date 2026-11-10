@@ -6,7 +6,8 @@
 #   1. the user monitoni (if missing) and its groups video, input, render, audio
 #   2. /etc/default/monitoni, the daemon's start options, from deploy/monitoni.default if absent
 #   3. the four units copied into /etc/systemd/system, then systemctl daemon-reload
-#   4. the touch rule copied into /etc/udev/rules.d (the panel is upside down), then applied
+#   4. the input rules copied into /etc/udev/rules.d (the panel is upside down; no mouse arrow),
+#      then applied
 #   5. the journald drop-in copied into /etc/systemd/journald.conf.d (log capped at 100 MB)
 #   6. systemctl enable for the daemon, the kiosk and the nightly reload timer
 # Nothing is started here; SETUP §7 and §9 do that. Every line is also written out in SETUP.
@@ -62,8 +63,9 @@ done
 systemctl daemon-reload
 echo "systemd: units reloaded"
 
-# 4. The touch rule: turns the touch panel's coordinates by 180°, like the picture. Applied to
-#    the panel at once; the kiosk reads it when it starts.
+# 4. The input rules: turn the touch panel's coordinates by 180°, like the picture, and hide
+#    every mouse, touchpad and pointing stick from libinput so cage draws no arrow. Applied to
+#    the devices at once; the kiosk reads them when it (re)starts.
 rule=99-monitoni-touch.rules
 if cmp -s "$DEPLOY/$rule" "/etc/udev/rules.d/$rule"; then
   echo "$rule: unchanged"

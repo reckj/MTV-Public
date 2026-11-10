@@ -131,8 +131,8 @@ function renderScreens(s) {
   el("spindle_btn").className = m.spindle_open ? "sb x" : "sb a";
   const t = s.config_view.motor;
   el("timings").replaceChildren(
-    ...[["Pre-delay", `${t.spindle_pre_delay_ms} ms`], ["Spin after release", `${t.spin_after_release_ms} ms`],
-        ["Post-delay", `${t.spindle_post_delay_ms} ms`], ["Hard stop", `${t.max_run_s} s`]]
+    ...[["Pre-delay", `${t.spindle_pre_delay_ms} ms`], ["Run-on after release", `${t.spin_after_release_ms} ms`],
+        ["Hard stop", `${t.max_run_s} s`]]
       .map(([k, v]) => h("div", { class: "r" }, h("span", {}, k), h("span", { class: "v" }, v))));
 
   // S4 LEDs

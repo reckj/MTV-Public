@@ -363,14 +363,13 @@ async def test_turn_held_across_the_timeout_stops_the_motor(client, make_daemon)
 
 async def test_status_additions(client, daemon):
     body = await status(client, daemon)
-    assert body["app_version"] == "0.8.0"
+    assert body["app_version"] == "0.8.1"
     assert isinstance(body["hostname"], str) and body["hostname"]
     assert body["ip"] is None or body["ip"].count(".") == 3
     assert body["purchase_server"]["base_url"] == "monitoni.zhdk.ch"
     assert body["settings"] == {"pin_is_default": True, "out_of_order": False}
     assert body["config_view"] == {
-        "motor": {"spindle_pre_delay_ms": 10, "spin_after_release_ms": 10,
-                  "spindle_post_delay_ms": 5, "max_run_s": 10.0},
+        "motor": {"spindle_pre_delay_ms": 10, "spin_after_release_ms": 10, "max_run_s": 10.0},
         "led": {"zones": [[12 * i, 12 * i + 11] for i in range(10)]},
         "door_locks": {"channels": list(range(1, 11))},
         "wled": {"ip_address": "192.168.1.102"},

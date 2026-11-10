@@ -1,13 +1,21 @@
 """Hold-to-turn motor sequence. The browser only sends press and release; the rest is here.
 
-press   -> spindle lock ON -> spindle_pre_delay_ms -> motor ON
-release -> spin_after_release_ms -> motor OFF -> spindle_post_delay_ms -> spindle lock OFF
+press   -> spindle lock ON (open) -> spindle_pre_delay_ms -> motor ON
+release -> spindle lock OFF (closed) at once -> spin_after_release_ms -> motor OFF
+
+The lock goes in the moment TURN is released and the motor runs on behind it, so the carousel
+runs into the closed lock (John, 2026-11-10). A release during the pre-delay closes the lock
+and never starts the motor. The `stop` event row of a release carries `run_on_ms`, the measured
+time from the lock write returning to the motor-off write.
 
 The motor always stops: on release, after max_run_s without a release (watchdog), and via
 `stop()`, which the daemon calls on every flow transition (a TURN held across Exit ends there),
-when the last WebSocket closes and on daemon stop. `stop()` runs the release sequence at once,
-without spin_after_release_ms, and closes the spindle lock whatever opened it: this module is
-the one owner of the spindle state, the settings tool goes through `set_spindle`.
+when the last WebSocket closes and on daemon stop. A forced stop is not a release: `stop()`
+switches the motor off first, at once, and closes the lock right after it, with no run-on; it
+also cuts a running release's run-on short. It closes the spindle lock whatever opened it:
+this module is the one owner of the spindle state, the settings tool goes through `set_spindle`.
+A lock write that fails at release ends in the emergency path like any failed sequence: motor
+off at once, fault, no retry.
 """
 
 import asyncio
@@ -63,11 +71,12 @@ class Motor:
             await self._guarded(self._start_sequence())
 
     async def release(self, reason: str = "release") -> None:
-        """Stop after spin_after_release_ms. A release without a press does nothing."""
+        """Lock the spindle now, switch the motor off after spin_after_release_ms. A release
+        without a press does nothing."""
         await self._end(reason, immediate=False)
 
     async def stop(self, reason: str) -> None:
-        """Stop now, without spin_after_release_ms, and close the spindle. Idempotent."""
+        """Motor off now, then the spindle closed, no run-on. Idempotent."""
         self._stop_now.set()
         await self._end(reason, immediate=True)
 
@@ -122,18 +131,39 @@ class Motor:
         self._watchdog = asyncio.create_task(self._watchdog_run(), name="motor-watchdog")
 
     async def _stop_sequence(self, reason: str, immediate: bool) -> None:
-        if not immediate:
-            await self._wait(self.config.spin_after_release_ms)
+        if immediate:
+            await self._forced_stop(reason)
+        else:
+            await self._release_stop(reason)
+
+    async def _forced_stop(self, reason: str) -> None:
+        """Watchdog, flow transition, last WebSocket closed, daemon stop: motor off first."""
         await self.hardware.set_motor(False)
         was_running, self.running = self.running, False
         self.on_change()
         if was_running:
             await self.events.write("motor", self.state_name(),
                                     details={"event": "stop", "reason": reason})
-        await asyncio.sleep(self.config.spindle_post_delay_ms / 1000)
         await self.hardware.set_spindle(False)
         self.spindle_open = False
         self.on_change()
+
+    async def _release_stop(self, reason: str) -> None:
+        """TURN released: lock first, the motor runs on behind it."""
+        await self.hardware.set_spindle(False)
+        self.spindle_open = False
+        locked_at = asyncio.get_running_loop().time()
+        self.on_change()
+        if not self.running:
+            return  # released during the pre-delay: the motor never started, nothing runs on
+        await self._wait(self.config.spin_after_release_ms)
+        run_on_ms = round((asyncio.get_running_loop().time() - locked_at) * 1000)
+        await self.hardware.set_motor(False)
+        self.running = False
+        self.on_change()
+        await self.events.write("motor", self.state_name(),
+                                details={"event": "stop", "reason": reason,
+                                         "run_on_ms": run_on_ms})
 
     async def _wait(self, ms: int) -> None:
         """Sleep, unless stop() cuts it short."""

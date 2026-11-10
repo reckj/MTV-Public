@@ -32,7 +32,6 @@ def make_config(tmp_path):
         config.vending.timings.thank_you_s = timings.get("thank_you_s", 0.0)  # no wait unless asked
         motor = config.hardware.motor
         motor.spindle_pre_delay_ms, motor.spin_after_release_ms = 10, 10
-        motor.spindle_post_delay_ms = 5
         return config
 
     return _make

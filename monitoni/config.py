@@ -74,7 +74,6 @@ class MotorConfig(_Strict):
     spindle_channel: int
     spindle_pre_delay_ms: int = Field(ge=0)
     spin_after_release_ms: int = Field(ge=0)
-    spindle_post_delay_ms: int = Field(ge=0)
     max_run_s: float = Field(gt=0)
 
 

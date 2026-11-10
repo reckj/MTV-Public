@@ -286,7 +286,6 @@ class Daemon:
             "config_view": {
                 "motor": {"spindle_pre_delay_ms": motor_cfg.spindle_pre_delay_ms,
                           "spin_after_release_ms": motor_cfg.spin_after_release_ms,
-                          "spindle_post_delay_ms": motor_cfg.spindle_post_delay_ms,
                           "max_run_s": motor_cfg.max_run_s},
                 "led": {"zones": self.config.led.zones},
                 "door_locks": {"channels": self.config.hardware.door_locks.channels},

@@ -460,9 +460,11 @@ It prints every step. What it does:
    (`monitoni.service`, `monitoni-kiosk.service`,
    `monitoni-kiosk-reload.service`, `monitoni-kiosk-reload.timer`) and tells
    systemd to read them (`systemctl daemon-reload`).
-4. Copies the touch rule `deploy/99-monitoni-touch.rules` into
-   `/etc/udev/rules.d/` and applies it: the panel is mounted upside down, so
-   the touch coordinates are turned by 180° like the picture.
+4. Copies the input rules `deploy/99-monitoni-touch.rules` into
+   `/etc/udev/rules.d/` and applies them: the panel is mounted upside down, so
+   the touch coordinates are turned by 180° like the picture; and every mouse,
+   touchpad and pointing stick is hidden from the kiosk, so no mouse arrow is
+   ever drawn on the display (the touch panel is never hidden).
 5. Copies `deploy/journald-monitoni.conf` to
    `/etc/systemd/journald.conf.d/monitoni.conf`: the system log is kept to
    100 MB and one month, so it cannot fill the card over the years.
@@ -802,7 +804,11 @@ is the value in `deploy/monitoni.service`, heard on vm001 on 2026-10-27 (S5
 Play, all three sounds). The three sound files live in `assets/sounds/`
 (`success.wav`, `alarm.wav`, `error.wav`, 16-bit 44.1 kHz); if one is
 missing the daemon logs `audio unavailable, sounds are off` at start and
-every sound is off until the file is back and the daemon restarted.
+every sound is off until the file is back and the daemon restarted. To
+replace a sound, commit a file with the same name as WAV, 16-bit, 44.1 kHz,
+stereo, and bring it onto the machine with the update steps at the end of
+§9 (the daemon loads the three files at start). John's own three sounds are
+in the repository since 2026-11-10.
 
 **The settings area.** Tap the small gear in the top right corner of the
 "Select a level" screen (or of the "Out of order" screen), type the PIN on the
@@ -900,8 +906,13 @@ on vm001 between 2026-10-23 and 2026-11-04; the go-live checks on
 3. **S3 Motor:** Spindle open/close; hold TURN, the carousel turns, release,
    it stops. Hold TURN for more than `max_run_s` (10 s): the daemon stops the
    motor by itself, the event log shows stop reason `watchdog`, the journal
-   "motor running for 10.0s without a release, stopping". The spindle lock
-   closes right after the motor stops (`spindle_post_delay_ms` 10).
+   "motor running for 10.0s without a release, stopping"; there the motor
+   goes off first and the lock closes right after it. On a release the order
+   is the other way round (since 2026-11-10): the spindle lock closes the
+   moment TURN is released and the motor runs on for `spin_after_release_ms`
+   (400 ms) into the closed lock, then stops. The `stop` row in S8 for a
+   release carries `run_on_ms`, the run-on the daemon measured; a hard stop
+   has no run-on and no such field.
 4. **S4 LEDs:** White lights every shelf, Level N lights shelf N and nothing
    else, Off darkens the strip. If White comes out coloured the strip's
    colour order in WLED is wrong (§1); if nothing lights, §10.
@@ -971,9 +982,11 @@ the "Select a shelf" screen within a few seconds. **Check on the display**:
 the screen is upright, the ten shelves are centred with nothing cut off on
 the right, and a tap lands under the finger: tap the gear in the top right
 corner (the PIN screen opens), Cancel, then shelf 10 at the bottom (its QR
-code screen opens), Cancel. A mouse arrow is shown while a keyboard with a
-touchpad (the K400) is plugged in; touch does not move it. Unplug the
-keyboard's receiver when the console is no longer needed. From then on,
+code screen opens), Cancel. No mouse arrow is drawn on the display, whatever
+is plugged in: the rules file from §5 hides every mouse, touchpad and pointing
+stick from the kiosk (since 2026-11-10; before that the arrow stood on the
+display in service). Unplug the keyboard's receiver anyway when the console
+is no longer needed. From then on,
 after every power-on, the shelf list appears by itself about 20 seconds
 after the boot text, with nothing typed (vm001: 16 s).
 
@@ -1095,3 +1108,9 @@ commissioning day.
   relay. Check `http://<ip>/json/state`: `on` must be `true`; in
   `http://<ip>/json/cfg` `hw.relay.pin` must be 18. Seen on vm001
   2026-11-03 (relay pin -1, then "off"); fixed the same day.
+- **A mouse arrow on the display.** The input rules from §5 are not in
+  place (`/etc/udev/rules.d/99-monitoni-touch.rules` missing or old): run
+  `sudo /opt/monitoni/deploy/install.sh`, then
+  `sudo systemctl restart monitoni-kiosk`. Seen on vm001 in its first week
+  of service (the Pi's own HDMI CEC inputs count as pointing devices);
+  the rule added 2026-11-10.

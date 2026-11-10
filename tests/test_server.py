@@ -325,9 +325,11 @@ async def test_motor_press_and_release(client, daemon):
     assert code == 200
     assert body["motor"]["running"] is False and body["motor"]["spindle_open"] is False
     assert switches(daemon) == ["set_spindle(True)", "set_motor(True)",
-                                "set_motor(False)", "set_spindle(False)"]
+                                "set_spindle(False)", "set_motor(False)"]  # lock first, run-on
     rows = [r["details"] for r in reversed(await events(client, daemon)) if r["kind"] == "motor"]
-    assert rows == [{"event": "start"}, {"event": "stop", "reason": "release"}]
+    assert rows[0] == {"event": "start"}
+    assert rows[1]["event"] == "stop" and rows[1]["reason"] == "release"
+    assert 10 <= rows[1]["run_on_ms"] < 100
 
 
 async def test_motor_press_resets_the_sleep_timer(client, make_daemon):
